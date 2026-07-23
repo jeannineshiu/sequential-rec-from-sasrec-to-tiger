@@ -1,0 +1,26 @@
+dataset: amazon-beauty
+data_dir: data/processed/beauty
+
+model:
+  hidden_dim: 64
+  num_blocks: 2
+  num_heads: 1
+  maxlen: 50
+  dropout: 0.5
+
+train:
+  batch_size: 128
+  lr: 0.001
+  adam_beta2: 0.98
+  max_epochs: 200
+  early_stop_patience: 20
+  early_stop_metric: sampled_NDCG@10
+  seed: 42
+
+eval:
+  k: 10
+  sampled_negatives: 100
+
+mlflow:
+  experiment: sequential-rec
+  run_name: sasrec_beauty

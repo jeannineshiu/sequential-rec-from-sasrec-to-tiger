@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.python-version-lock
+
+# Data (downloaded, not committed)
+data/raw/
+data/processed/
+*.csv
+*.dat
+*.zip
+*.gz
+
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+
+# Results (regenerable; keep only curated tables/figures if desired)
+results/figures/*.png
+results/tables/*.csv
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+.obsidian/
