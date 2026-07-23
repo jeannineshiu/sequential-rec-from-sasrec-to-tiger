@@ -52,3 +52,68 @@ section.
   repo) once to record a third-party reference number for Week 2's triangulation step.
 
 ---
+
+## Week 2 — SASRec from scratch
+
+**2026-07-23**
+
+- **Model implementation (`src/models/sasrec.py`).** Followed Kang & McAuley (2018)
+  closely: item embedding scaled by `sqrt(hidden_dim)` + learnable positional embedding
+  indexed by absolute slot position in the padded window (not relative-to-content),
+  2 causal self-attention blocks (pre-LN: LayerNorm → MHA → residual) each followed by
+  a point-wise conv FFN, output layer shares weights with the input item embedding.
+
+- **Guarded against the known SASRec footguns up front** (`tests/test_sasrec.py`, 5 tests):
+  - Causal mask direction: changing the last token of a sequence must not change the
+    encoder output at any earlier position. Verified directly — encoding two sequences
+    that differ only in the final slot gives identical hidden states everywhere except
+    that slot.
+  - Padding excluded from attention: `key_padding_mask` construction unit-tested against
+    `input_seqs == 0` directly.
+  - Positional embedding range: `pos_emb` sized `maxlen + 1` (slot 0 reserved for
+    padding_idx); tested with a full-length, no-padding sequence to make sure indexing
+    `maxlen` doesn't throw.
+  - `model.score()` (candidate-subset scoring, used by the sampled evaluator) and
+    `model.score_full_catalog()` (used by full-ranking) tested for numerical agreement
+    on overlapping items — a divergence here would have meant sampled and full-ranking
+    numbers for the same model aren't actually comparable.
+
+- **Training loop (`src/train.py`).** Adam (lr=1e-3, β2=0.98), BCE-with-logits over
+  per-position pos/neg pairs masked to non-padding positions, early stopping on sampled
+  valid NDCG@10 (patience 20), MLflow logging per epoch, checkpoint saved to
+  `results/checkpoints/`.
+
+- **Smoke test (2 epochs)** before committing to a full run: loss 1.18 → 1.00, no
+  crashes, ~7-14s/epoch on Apple Silicon MPS. Confirmed feasible to run the full 200
+  epochs locally (~25 min) rather than needing cloud compute for this phase.
+
+- **Full run, ML-1M, 200 epochs (no early stop triggered — valid NDCG kept slowly
+  improving through epoch 200):**
+
+  | Metric | Paper (Kang & McAuley 2018) | This repo | In range? |
+  |---|---|---|---|
+  | sampled HR@10 | 0.80–0.83 | **0.8190** | ✅ |
+  | sampled NDCG@10 | 0.57–0.60 | **0.5948** | ✅ |
+  | full HR@10 | — | 0.2475 | (no paper reference; far above BPR-MF's 0.0671) |
+  | full NDCG@10 | — | 0.1322 | (no paper reference; far above BPR-MF's 0.0333) |
+
+  **M2 milestone met on the first full training run** — no debugging iteration needed
+  against the known footguns list, which suggests writing the 5 targeted unit tests
+  before training paid off (would otherwise have been the Day 6-7 "align with paper"
+  debugging slog per EXECUTION_PLAN.md).
+
+- **Operational note:** accidentally deleted `mlflow.db` right before kicking off the
+  full training run (ran `rm -f mlflow.db` to get a clean tracking db, forgetting it
+  also held the Week 1 Popularity/BPR-MF run records). The numbers themselves were safe
+  in this log and in README.md, so just re-ran `src/baselines.py` afterward to restore
+  the MLflow entries (identical results, fully deterministic seeds). Lesson: don't blow
+  away shared tracking state for a single new run — MLflow experiments should be
+  additive, not reset per run.
+
+- **Still open before Week 2 is fully closed:** run SASRec via RecBole for the
+  three-way triangulation (paper vs. RecBole vs. this repo) mentioned in
+  EXECUTION_PLAN.md Day 6-7 — deferred since the repo's own number already lands
+  inside the target range, but the cross-validation still adds credibility for the
+  eventual writeup.
+
+---

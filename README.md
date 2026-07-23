@@ -9,7 +9,7 @@ Full plan: [`sequential-rec-project-plan.md`](sequential-rec-project-plan.md)
 Execution checklist: [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md)
 Debugging trail: [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md)
 
-## Status: Week 1 in progress
+## Status: Week 2 done (M2 milestone met) — Week 3 next
 
 ## Reproduction table (updated as results land)
 
@@ -20,8 +20,8 @@ Debugging trail: [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md)
 | Popularity | 0.4363 | 0.2401 | floor |
 | BPR-MF (implicit) | 0.5745 | 0.3357 | floor |
 | SASRec (paper, Kang & McAuley 2018) | 0.8245 | 0.5905 | target |
-| SASRec (this repo) | — | — | Week 2 |
-| SASRec (RecBole, cross-val) | — | — | Week 2 |
+| **SASRec (this repo)** | **0.8190** | **0.5948** | ✅ within target range (0.80–0.83 / 0.57–0.60) |
+| SASRec (RecBole, cross-val) | — | — | deferred, see REPRODUCTION_LOG.md |
 | BERT4Rec (RecBole) | — | — | Week 4 |
 
 ### ML-1M, full ranking (rank against entire catalog, excl. history), test set, k=10
@@ -30,7 +30,7 @@ Debugging trail: [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md)
 |---|---|---|
 | Popularity | 0.0369 | 0.0180 |
 | BPR-MF (implicit) | 0.0671 | 0.0333 |
-| SASRec (this repo) | — | — |
+| SASRec (this repo) | 0.2475 | 0.1322 |
 
 ### Amazon Beauty / TIGER-style comparison
 
@@ -55,6 +55,7 @@ uv sync
 uv run python -m src.data.download --dest data/raw
 uv run python -m src.data.preprocess --raw-dir data/raw/ml-1m --out-dir data/processed/ml-1m
 uv run python -m src.baselines --data-dir data/processed/ml-1m
+uv run python -m src.train --config configs/sasrec_ml1m.yaml
 uv run pytest tests/
 ```
 

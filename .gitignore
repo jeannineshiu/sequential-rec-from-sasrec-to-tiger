@@ -21,6 +21,7 @@ mlflow.db
 # Results (regenerable; keep only curated tables/figures if desired)
 results/figures/*.png
 results/tables/*.csv
+results/checkpoints/
 
 # Notebooks checkpoints
 .ipynb_checkpoints/
