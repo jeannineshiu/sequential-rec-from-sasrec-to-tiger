@@ -25,6 +25,16 @@ def load_ml1m_ratings(ml1m_dir: Path) -> pd.DataFrame:
     return df[["user", "item", "timestamp"]]
 
 
+def load_beauty_ratings(beauty_dir: Path) -> pd.DataFrame:
+    """Load the Amazon 'Beauty' ratings-only CSV as implicit feedback.
+
+    Columns (no header): userId, productId (ASIN), rating, timestamp.
+    """
+    path = Path(beauty_dir) / "ratings_Beauty.csv"
+    df = pd.read_csv(path, names=["user", "item", "rating", "timestamp"])
+    return df[["user", "item", "timestamp"]]
+
+
 def k_core_filter(df: pd.DataFrame, k: int = 5) -> pd.DataFrame:
     """Iteratively drop users/items with fewer than k interactions until stable."""
     while True:
@@ -85,11 +95,10 @@ def print_stats(df: pd.DataFrame, sequences: dict[int, list[int]]) -> None:
     print(f"avg sequence length={avg_len:.2f} min={min(lengths)} max={max(lengths)}")
 
 
-def run_ml1m_pipeline(raw_dir: Path, out_dir: Path, k: int = 5) -> None:
+def run_pipeline(df: pd.DataFrame, out_dir: Path, k: int = 5) -> None:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    df = load_ml1m_ratings(raw_dir)
     df = k_core_filter(df, k=k)
     df, user_map, item_map = reindex_ids(df)
     sequences = build_sequences(df)
@@ -114,10 +123,26 @@ def run_ml1m_pipeline(raw_dir: Path, out_dir: Path, k: int = 5) -> None:
     print(f"Wrote splits to {out_dir}")
 
 
+def run_ml1m_pipeline(raw_dir: Path, out_dir: Path, k: int = 5) -> None:
+    run_pipeline(load_ml1m_ratings(raw_dir), out_dir, k=k)
+
+
+def run_beauty_pipeline(raw_dir: Path, out_dir: Path, k: int = 5) -> None:
+    run_pipeline(load_beauty_ratings(raw_dir), out_dir, k=k)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--raw-dir", type=str, default="data/raw/ml-1m")
-    parser.add_argument("--out-dir", type=str, default="data/processed/ml-1m")
+    parser.add_argument("--dataset", choices=["ml-1m", "beauty"], default="ml-1m")
+    parser.add_argument("--raw-dir", type=str, default=None)
+    parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--k", type=int, default=5)
     args = parser.parse_args()
-    run_ml1m_pipeline(Path(args.raw_dir), Path(args.out_dir), k=args.k)
+
+    raw_dir = args.raw_dir or f"data/raw/{'ml-1m' if args.dataset == 'ml-1m' else 'beauty'}"
+    out_dir = args.out_dir or f"data/processed/{'ml-1m' if args.dataset == 'ml-1m' else 'beauty'}"
+
+    if args.dataset == "ml-1m":
+        run_ml1m_pipeline(Path(raw_dir), Path(out_dir), k=args.k)
+    else:
+        run_beauty_pipeline(Path(raw_dir), Path(out_dir), k=args.k)

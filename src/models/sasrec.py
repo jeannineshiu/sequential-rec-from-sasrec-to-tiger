@@ -15,6 +15,24 @@ import torch
 import torch.nn as nn
 
 
+def sinusoidal_position_table(maxlen: int, hidden_dim: int) -> torch.Tensor:
+    """Fixed (non-learnable) sinusoidal position encoding, shape [maxlen + 1, D].
+
+    Row 0 is the padding slot (zeros); rows 1..maxlen follow the standard
+    Vaswani et al. (2017) formula for positions 0..maxlen-1, used here for the
+    A1 positional-embedding ablation (learnable vs none vs sinusoidal).
+    """
+    table = torch.zeros(maxlen + 1, hidden_dim)
+    position = torch.arange(0, maxlen, dtype=torch.float32).unsqueeze(1)
+    div_term = torch.exp(
+        torch.arange(0, hidden_dim, 2, dtype=torch.float32)
+        * (-torch.log(torch.tensor(10000.0)) / hidden_dim)
+    )
+    table[1:, 0::2] = torch.sin(position * div_term)
+    table[1:, 1::2] = torch.cos(position * div_term[: table[1:, 1::2].shape[1]])
+    return table
+
+
 def build_masks(input_seqs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """
     input_seqs: LongTensor [B, T], 0 = padding.
@@ -60,16 +78,24 @@ class SASRec(nn.Module):
         num_blocks: int = 2,
         num_heads: int = 1,
         dropout: float = 0.2,
+        pos_emb_type: str = "learnable",
     ):
         super().__init__()
+        if pos_emb_type not in ("learnable", "none", "sinusoidal"):
+            raise ValueError(f"unknown pos_emb_type: {pos_emb_type}")
         self.n_items = n_items
         self.maxlen = maxlen
         self.hidden_dim = hidden_dim
+        self.pos_emb_type = pos_emb_type
 
         self.item_emb = nn.Embedding(n_items + 1, hidden_dim, padding_idx=0)
         # positions are 1-indexed absolute slots in the window; slot 0 (padding_idx)
         # is reserved so padded positions contribute a zero positional embedding.
-        self.pos_emb = nn.Embedding(maxlen + 1, hidden_dim, padding_idx=0)
+        if pos_emb_type == "learnable":
+            self.pos_emb = nn.Embedding(maxlen + 1, hidden_dim, padding_idx=0)
+        elif pos_emb_type == "sinusoidal":
+            self.register_buffer("pos_emb_table", sinusoidal_position_table(maxlen, hidden_dim))
+        # "none": no positional embedding parameter/buffer at all
         self.emb_dropout = nn.Dropout(dropout)
 
         self.attn_layernorms = nn.ModuleList()
@@ -99,9 +125,13 @@ class SASRec(nn.Module):
         causal_mask, key_padding_mask = build_masks(input_seqs)
 
         seqs = self.item_emb(input_seqs) * (self.hidden_dim**0.5)
-        positions = torch.arange(1, T + 1, device=device).unsqueeze(0).expand(B, T)
-        positions = positions * (~key_padding_mask).long()
-        seqs = seqs + self.pos_emb(positions)
+        if self.pos_emb_type != "none":
+            positions = torch.arange(1, T + 1, device=device).unsqueeze(0).expand(B, T)
+            positions = positions * (~key_padding_mask).long()
+            if self.pos_emb_type == "learnable":
+                seqs = seqs + self.pos_emb(positions)
+            else:  # sinusoidal
+                seqs = seqs + self.pos_emb_table[positions]
         seqs = self.emb_dropout(seqs)
         seqs = seqs.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
 

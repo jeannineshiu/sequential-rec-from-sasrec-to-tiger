@@ -18,9 +18,8 @@ mlruns/
 mlartifacts/
 mlflow.db
 
-# Results (regenerable; keep only curated tables/figures if desired)
-results/figures/*.png
-results/tables/*.csv
+# Results: master.md and figures ARE committed deliverables (script-generated,
+# referenced from README.md) -- only the large binary checkpoints are excluded.
 results/checkpoints/
 
 # Notebooks checkpoints

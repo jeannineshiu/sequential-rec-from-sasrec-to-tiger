@@ -69,7 +69,10 @@ def run(config_path: str, max_epochs_override: int | None = None) -> dict:
     negatives = load_negatives(data_dir / "negatives.json")
 
     maxlen = cfg["model"]["maxlen"]
-    train_ds = SASRecTrainDataset(train, n_items=n_items, maxlen=maxlen, seed=seed)
+    neg_sampling = cfg["train"].get("neg_sampling", "uniform")
+    train_ds = SASRecTrainDataset(
+        train, n_items=n_items, maxlen=maxlen, seed=seed, neg_sampling=neg_sampling
+    )
     train_loader = DataLoader(
         train_ds, batch_size=cfg["train"]["batch_size"], shuffle=True, drop_last=False
     )
@@ -81,6 +84,7 @@ def run(config_path: str, max_epochs_override: int | None = None) -> dict:
         num_blocks=cfg["model"]["num_blocks"],
         num_heads=cfg["model"]["num_heads"],
         dropout=cfg["model"]["dropout"],
+        pos_emb_type=cfg["model"].get("pos_emb_type", "learnable"),
     ).to(device)
 
     optimizer = torch.optim.Adam(
@@ -95,6 +99,7 @@ def run(config_path: str, max_epochs_override: int | None = None) -> dict:
     best_valid_ndcg = -1.0
     best_state = None
     epochs_without_improvement = 0
+    epoch_times: list[float] = []
 
     mlflow.set_tracking_uri("sqlite:///mlflow.db")
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
@@ -137,6 +142,7 @@ def run(config_path: str, max_epochs_override: int | None = None) -> dict:
 
             avg_loss = total_loss / n_batches
             epoch_time = time.time() - epoch_start
+            epoch_times.append(epoch_time)
 
             valid_score_fn = make_score_fn(model, device, mode="sampled")
             valid_metrics = evaluate_sampled(
@@ -205,6 +211,8 @@ def run(config_path: str, max_epochs_override: int | None = None) -> dict:
         final_metrics = {f"test_sampled_{k_}": v for k_, v in test_sampled.items()} | {
             f"test_full_{k_}": v for k_, v in test_full.items()
         }
+        final_metrics["epochs_trained"] = float(len(epoch_times))
+        final_metrics["avg_epoch_time_sec"] = sum(epoch_times) / len(epoch_times)
         safe_final = {k_.replace("@", "_at_"): v for k_, v in final_metrics.items()}
         mlflow.log_metrics(safe_final)
 

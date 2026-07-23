@@ -117,3 +117,106 @@ section.
   eventual writeup.
 
 ---
+
+## Week 3 — Amazon Beauty + ablations
+
+**2026-07-23**
+
+- **Beauty pipeline.** Downloaded the Amazon "Beauty" ratings-only CSV (snap.stanford.edu
+  mirror, 82MB, no official checksum published so just sanity-checked via row/user/item
+  counts) and ran it through the same generic `k_core_filter` / `leave_one_out_split`
+  pipeline as ML-1M (refactored `preprocess.py` to share that logic — only the raw-file
+  loader differs between datasets now).
+  - Result: `users=22363 items=12101 interactions=198502`, avg sequence length 8.88
+    (min 5, max 204) — matches Kang & McAuley (2018) Table 1 almost exactly (paper:
+    22363 users, 12101 items, 198502 actions). Second dataset in a row where the stats
+    line up before any model code touches it.
+  - This dataset is sparse (avg 8.9 actions/user) vs. ML-1M's dense 165.5 — the
+    contrast itself is the point of running both (per EXECUTION_PLAN.md).
+
+- **Beauty SASRec run** (`configs/sasrec_beauty.yaml`: maxlen 50, hidden_dim 64,
+  dropout 0.5, 200 epochs):
+
+  | Metric | Paper (~0.4854, ±2pp accepted) | This repo | In range? |
+  |---|---|---|---|
+  | sampled HR@10 | 0.4654–0.5054 | **0.5097** | ⚠️ +0.43pp over the accepted band |
+  | sampled NDCG@10 | — | 0.3453 | (no paper reference given in EXECUTION_PLAN.md) |
+  | full HR@10 | — | 0.0594 | |
+  | full NDCG@10 | — | 0.0303 | |
+
+  Slightly outside the ±2pp band, but only barely, and Beauty reproductions are known
+  to be more hyperparameter-sensitive than ML-1M across published SASRec ports (sparse
+  data, short sequences) — not chasing this further given the small margin; reporting
+  as-is rather than tuning until it lands inside the band, per the project's honesty
+  principle over cherry-picked numbers.
+
+- **Model/dataset extended for the ablations** (`src/models/sasrec.py`,
+  `src/data/dataset.py`), each covered by new unit tests before any training was run:
+  - `pos_emb_type`: `learnable` (existing) / `none` (skip positional embedding
+    entirely) / `sinusoidal` (fixed Vaswani et al. 2017 encoding, registered as a
+    buffer, not a parameter — confirmed via `named_buffers()` vs `named_parameters()`).
+  - `neg_sampling`: `uniform` (existing) / `popularity` (weighted by training-set
+    item frequency, sampled via a precomputed CDF + `searchsorted` rather than
+    re-normalizing on every call).
+  - 10 new tests (27 total): positional-embedding invariance under `none`, buffer-vs-
+    parameter check and zero-padding-row check for `sinusoidal`, popularity sampling
+    never returning a user's own history and empirically favoring frequent items over
+    rare ones (500-sample frequency check).
+
+- **Ablation runs use `max_epochs=100`** (vs. 200 for the headline SASRec/Beauty
+  numbers above) — a deliberate compute-saving choice since ablations are about
+  *relative* comparison between configs, not re-chasing the exact paper-aligned peak
+  for each variant. Noting this explicitly since it's a deviation from the main-result
+  protocol.
+
+- **All 5 ablation runs completed** (100/100 epochs each, no early stopping triggered).
+  Full table: `results/tables/master.md` (generated via `uv run python -m src.export_results`,
+  never hand-copied). Results (ML-1M, sampled/full HR@10 & NDCG@10, test set):
+
+  | Ablation | sampled HR@10 | sampled NDCG@10 | full HR@10 | full NDCG@10 | avg s/epoch |
+  |---|---|---|---|---|---|
+  | Baseline (learnable pos emb, maxlen 200, uniform neg) | 0.8190 | 0.5948 | 0.2475 | 0.1322 | ~7.0 |
+  | **A1** pos_emb = none | 0.8066 | 0.5707 | 0.2291 | 0.1222 | 7.47 |
+  | **A1** pos_emb = sinusoidal | 0.8147 | 0.5763 | 0.2182 | 0.1134 | 6.91 |
+  | **A2** maxlen = 50 | 0.7858 | 0.5539 | 0.2033 | 0.1080 | 1.53 |
+  | **A2** maxlen = 100 | 0.8058 | 0.5762 | 0.2346 | 0.1228 | 2.85 |
+  | **A4** neg_sampling = popularity | 0.7540 | 0.5225 | 0.1871 | 0.0995 | 6.93 |
+
+  **A1 (positional embedding):** learnable > sinusoidal > none on sampled NDCG@10, but
+  the gap is smaller than expected (none only ~2.4pp NDCG below learnable) — on ML-1M's
+  dense sequences (avg 165 actions/user), the model apparently recovers a fair amount of
+  order information from the causal mask structure alone. This is a *softer* result
+  than the paper's framing that learnable positional embeddings matter a lot on dense
+  data; worth flagging honestly rather than overstating the effect.
+
+  **A2 (maxlen):** clear monotonic trend, HR/NDCG improve from maxlen 50 → 100 → 200
+  (baseline), while per-epoch time roughly follows the expected quadratic-ish scaling
+  in attention cost (1.53s → 2.85s → ~7.0s, i.e. maxlen 200 costs ~4.6x maxlen 50 for
+  ~13x the sequence length — sub-quadratic in practice, likely because much of the
+  per-epoch cost is embedding/FFN overhead that's linear in maxlen, not just attention).
+  Textbook sequence-length-vs-quality-vs-cost tradeoff curve.
+
+  **A4 (negative sampling):** popularity-weighted training negatives *hurt* rather than
+  helped (0.754 vs. 0.819 sampled HR@10) — the biggest single drop of any ablation.
+  Plausible explanation: popularity-weighted negatives are "harder" (the model spends
+  more capacity distinguishing popular-but-wrong items from the true next item) but at
+  only 100 epochs the model hasn't had time to fully exploit that harder signal, so it
+  just looks like slower/worse convergence. Flagging as an open question rather than a
+  settled conclusion — a longer run might change this ranking, which is itself the
+  point of running ablations at reduced epoch budget: real but budget-sensitive effects
+  need to be labeled as such, not presented as final.
+
+- **A3 (sampled vs. full-ranking correlation):** scatter plot at
+  `results/figures/sampled_vs_full.png`, built from every trained model so far (Week 2
+  ML-1M, Week 3 Beauty, both baselines, all 5 ablation variants) rather than per-epoch
+  checkpoints of a single run — treating each *trained model* as one (sampled, full)
+  data point. Finding: within ML-1M, the two protocols correlate cleanly (all 6 ML-1M
+  variants + baselines fall on a clear upward trend). But the relationship is not
+  universal across datasets/catalog sizes — Beauty's full-ranking HR@10 (0.059) sits
+  far below where its sampled HR@10 (0.510) would predict if extrapolating the ML-1M
+  trend, because full-ranking difficulty scales with catalog size (12101 items vs.
+  3416) independent of model quality. Takeaway for the eventual writeup: sampled-vs-full
+  correlation is real but dataset-conditional — comparing full-ranking numbers *across*
+  datasets needs catalog-size normalization, comparing *within* a dataset is fine.
+
+---

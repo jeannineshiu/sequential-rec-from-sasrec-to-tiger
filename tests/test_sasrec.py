@@ -4,7 +4,7 @@ causal mask direction, padding exclusion, and positional-embedding index range.
 
 import torch
 
-from src.models.sasrec import SASRec, build_masks
+from src.models.sasrec import SASRec, build_masks, sinusoidal_position_table
 
 
 def test_causal_mask_upper_triangle_true():
@@ -66,3 +66,44 @@ def test_score_and_score_full_catalog_agree():
 
     for i, item in enumerate([5, 10, 15]):
         assert torch.allclose(direct_scores[0, i], full_scores[0, item], atol=1e-5)
+
+
+def test_pos_emb_type_none_ignores_position():
+    """With pos_emb_type='none', shuffling non-padding positions in a way that
+    keeps the causal structure trivial (single real item) must not change that
+    item's contribution -- there is no positional signal to distinguish slots."""
+    torch.manual_seed(0)
+    model = SASRec(
+        n_items=20, maxlen=6, hidden_dim=8, num_blocks=1, num_heads=1, pos_emb_type="none"
+    )
+    model.eval()
+    assert not hasattr(model, "pos_emb")
+    assert not hasattr(model, "pos_emb_table")
+
+    # same single real item at two different absolute slots (rest padding)
+    seq_early = torch.tensor([[7, 0, 0, 0, 0, 0]])
+    seq_late = torch.tensor([[0, 0, 0, 0, 0, 7]])
+    with torch.no_grad():
+        out_early = model.encode(seq_early)[:, 0, :]
+        out_late = model.encode(seq_late)[:, -1, :]
+
+    assert torch.allclose(out_early, out_late, atol=1e-6)
+
+
+def test_pos_emb_type_sinusoidal_is_fixed_not_learnable():
+    model = SASRec(
+        n_items=20, maxlen=6, hidden_dim=8, num_blocks=1, num_heads=1, pos_emb_type="sinusoidal"
+    )
+    assert "pos_emb_table" in dict(model.named_buffers())
+    assert "pos_emb_table" not in dict(model.named_parameters())
+    # padding slot (index 0) must be all-zero so padded positions get no signal
+    assert torch.allclose(model.pos_emb_table[0], torch.zeros(8))
+
+
+def test_sinusoidal_position_table_shape_and_padding_row():
+    table = sinusoidal_position_table(maxlen=10, hidden_dim=16)
+    assert table.shape == (11, 16)
+    assert torch.equal(table[0], torch.zeros(16))
+    assert not torch.allclose(table[1], torch.zeros(16))
+    # distinct positions must get distinct encodings
+    assert not torch.allclose(table[1], table[2])

@@ -1,0 +1,28 @@
+# A1 ablation: fixed sinusoidal positional embedding instead of learnable
+dataset: ml-1m
+data_dir: data/processed/ml-1m
+
+model:
+  hidden_dim: 50
+  num_blocks: 2
+  num_heads: 1
+  maxlen: 200
+  dropout: 0.2
+  pos_emb_type: sinusoidal
+
+train:
+  batch_size: 128
+  lr: 0.001
+  adam_beta2: 0.98
+  max_epochs: 100
+  early_stop_patience: 20
+  early_stop_metric: sampled_NDCG@10
+  seed: 42
+
+eval:
+  k: 10
+  sampled_negatives: 100
+
+mlflow:
+  experiment: sequential-rec
+  run_name: ablation_ml1m_posemb_sinusoidal
