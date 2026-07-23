@@ -25,6 +25,9 @@ results/tables/*.csv
 # Notebooks checkpoints
 .ipynb_checkpoints/
 
+# Personal notes (not part of the repo)
+notes/
+
 # OS
 .DS_Store
 
