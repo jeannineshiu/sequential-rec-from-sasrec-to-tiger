@@ -91,6 +91,15 @@ def main() -> None:
         CreateSandboxFromImageParams(
             image="pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime",
             resources=Resources(
+                cpu=4,
+                memory=16,
+                disk=30,  # GB -- explicit and modest: ML-1M + code + docker
+                # layers don't need much. Not specifying disk risks a large
+                # default that can push you over an org-wide storage cap
+                # (we hit "Total disk limit exceeded. Maximum allowed:
+                # 300GiB" on the first real run -- check app.daytona.io for
+                # leftover sandboxes from earlier attempts/experiments if
+                # you still hit this after adding an explicit disk size).
                 gpu=1,
                 gpu_type=[GpuType.RTX_4090, GpuType.RTX_PRO_6000, GpuType.RTX_5090],
             ),
