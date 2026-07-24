@@ -62,7 +62,13 @@ from pathlib import Path
 from daytona import CreateSandboxFromImageParams, Daytona, DaytonaConfig, GpuType, Resources
 
 REPO_URL = "https://github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger.git"
-REPO_DIR = "sequential-rec-from-sasrec-to-tiger"
+# Absolute path on purpose: process.exec's default cwd is /workspace (the
+# pytorch image's WORKDIR -- confirmed by an earlier run's traceback showing
+# the clone at /workspace/...), but the FileSystem API (fs.upload_file /
+# fs.download_file) resolves relative paths against the user's home dir,
+# which for root is /root, NOT /workspace. Using one absolute path everywhere
+# removes the ambiguity for both APIs.
+REPO_DIR = "/workspace/sequential-rec-from-sasrec-to-tiger"
 
 # (model, run_name, epochs) for the 1x/4x/10x training-budget sweep.
 # 200 epochs matches our own SASRec headline run (configs/sasrec_ml1m.yaml);
@@ -96,6 +102,17 @@ def main() -> None:
     api_key = os.environ.get("DAYTONA_API_KEY")
     if not api_key:
         print("Set DAYTONA_API_KEY first (app.daytona.io/dashboard/keys)", file=sys.stderr)
+        sys.exit(1)
+
+    # Check the local data file BEFORE creating (and paying for) a sandbox.
+    local_ratings = Path("data/raw/ml-1m/ratings.dat")
+    if not local_ratings.exists():
+        print(
+            f"{local_ratings} not found locally -- run "
+            "`uv run python -m src.data.download --dest data/raw --dataset ml-1m` "
+            "on this machine first (and run this script from the repo root).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     daytona = Daytona(DaytonaConfig(api_key=api_key))
@@ -154,13 +171,7 @@ def main() -> None:
         # looks like it's blocking the cloud provider's outbound IP range
         # rather than anything fixable client-side. Upload the already-
         # downloaded local copy instead of letting the sandbox fetch it.
-        local_ratings = Path("data/raw/ml-1m/ratings.dat")
-        if not local_ratings.exists():
-            raise FileNotFoundError(
-                f"{local_ratings} not found locally -- run "
-                "`uv run python -m src.data.download --dest data/raw --dataset ml-1m` "
-                "on this machine first, then re-run this script."
-            )
+        # (local_ratings existence was already checked before sandbox creation.)
         run(sandbox, f"mkdir -p {REPO_DIR}/data/raw/ml-1m")
         print(f"\n(uploading {local_ratings} -> sandbox:{REPO_DIR}/data/raw/ml-1m/ratings.dat)")
         sandbox.fs.upload_file(str(local_ratings), f"{REPO_DIR}/data/raw/ml-1m/ratings.dat")
