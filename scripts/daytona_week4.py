@@ -14,25 +14,37 @@ Usage:
 Safety notes -- READ BEFORE RUNNING (this spends real Daytona credits, billed
 per second while the sandbox is running):
 
-1. auto_delete_interval is set to -1 (never auto-delete). A positive value
-   means "delete N minutes after the sandbox is stopped"; 0 means "delete
-   immediately on stop" -- neither is what we want, since we need the sandbox
-   to still exist after this script finishes so we can pull results off it.
-   YOU must manually stop + delete the sandbox once you've confirmed the
-   results download succeeded (instructions are printed at the end).
+1. CORRECTED after actually hitting this: GPU sandboxes on Daytona are
+   REQUIRED to use auto_delete_interval=0, which the API enforces
+   server-side ("GPU sandboxes must be ephemeral") -- you cannot opt out.
+   auto_delete_interval=0 means the sandbox is deleted THE INSTANT it stops,
+   with everything on it. There is no "stopped but recoverable" state for a
+   GPU sandbox, unlike regular sandboxes. Consequences:
+     - auto_stop_interval is set to 0 (disables auto-stop-on-idle) so a long
+       training run can't get silently stopped -> deleted by an inactivity
+       timer while epochs are still running.
+     - We download mlflow.db after EVERY experiment (not just at the end),
+       so a crash partway through the sweep still leaves partial results on
+       your local machine instead of losing everything.
+     - NEVER call sandbox.stop()/delete() until you've confirmed the final
+       download succeeded. Once stopped, it's gone -- there's no "oops, let
+       me grab one more file" recovery.
 
 2. This script does NOT try to merge the sandbox's results into this repo's
    results/tables/master.md automatically. That file is regenerated from
    *all* MLflow runs found in mlflow.db, and the sandbox's mlflow.db only
-   ever sees the 6 RecBole runs it just created -- running export_results.py
-   inside the sandbox and pushing that back would silently overwrite/erase
-   every Week 1-3 row. Instead, this script downloads the sandbox's mlflow.db
-   as mlflow_daytona_week4.db in the repo root; bring that back to your main
-   Claude Code session and it'll pull the 6 new rows out and merge them in.
+   ever sees the RecBole runs it creates -- running export_results.py inside
+   the sandbox and pushing that back would silently overwrite/erase every
+   Week 1-3 row. Instead, this script downloads the sandbox's mlflow.db as
+   mlflow_daytona_week4.db in the repo root; bring that back to your main
+   Claude Code session and it'll pull the new rows out and merge them in.
 
 3. If this script crashes partway through, the sandbox is deliberately left
-   running (not cleaned up) so you don't lose a half-finished run. Check the
-   Daytona dashboard (app.daytona.io) if this script doesn't reach the end.
+   running (not cleaned up) so you don't lose a half-finished run -- but see
+   point 1: it's still one crash-then-idle-timeout away from deletion if
+   auto_stop_interval weren't disabled, which is why that's set explicitly.
+   Check the Daytona dashboard (app.daytona.io) if this script doesn't reach
+   the end, and stop/delete the sandbox manually once you're done with it.
 """
 
 import os
@@ -82,7 +94,14 @@ def main() -> None:
                 gpu=1,
                 gpu_type=[GpuType.RTX_4090, GpuType.RTX_PRO_6000, GpuType.RTX_5090],
             ),
-            auto_delete_interval=-1,  # never auto-delete -- see module docstring
+            # Required by Daytona for GPU sandboxes ("must be ephemeral") --
+            # deletes the sandbox the instant it stops. Not optional; see the
+            # module docstring's safety notes for what this means in practice.
+            auto_delete_interval=0,
+            # Disables auto-stop-on-idle so a multi-hour training run can't
+            # get stopped (-> immediately deleted, per the line above) by an
+            # inactivity timer between epochs.
+            auto_stop_interval=0,
         ),
         timeout=180,  # GPU provisioning can take longer than the 60s default
     )
@@ -99,6 +118,8 @@ def main() -> None:
         )
         run(sandbox, "uv run python -m src.recbole_utils.convert_to_atomic", cwd=REPO_DIR)
 
+        local_db_path = "mlflow_daytona_week4.db"
+
         for model, run_name, epochs in EXPERIMENTS:
             run(
                 sandbox,
@@ -106,20 +127,23 @@ def main() -> None:
                 f"--epochs {epochs} --run-name {run_name}",
                 cwd=REPO_DIR,
             )
+            # Download after every experiment, not just at the end -- a GPU
+            # sandbox is deleted the instant it stops (see docstring), so a
+            # crash on run 5 of 6 must not cost us runs 1-4's results too.
+            sandbox.fs.download_file(f"{REPO_DIR}/mlflow.db", local_db_path)
+            print(f"  -> synced mlflow.db to {local_db_path} after {run_name}")
 
-        local_db_path = "mlflow_daytona_week4.db"
-        sandbox.fs.download_file(f"{REPO_DIR}/mlflow.db", local_db_path)
-        print(f"\nDownloaded sandbox's mlflow.db -> {local_db_path}")
+        print(f"\nFinal mlflow.db synced to {local_db_path}")
         print("Bring this file back to your main Claude Code session to merge the")
-        print("6 new RecBole runs into results/tables/master.md and REPRODUCTION_LOG.md.")
+        print("new RecBole runs into results/tables/master.md and REPRODUCTION_LOG.md.")
 
     finally:
         print("\n" + "=" * 70)
         print(f"Sandbox ID: {sandbox.id}")
         print("This sandbox is STILL RUNNING and billing per second.")
-        print("Once you've confirmed mlflow_daytona_week4.db downloaded correctly:")
+        print("Stopping it deletes it immediately (GPU sandboxes are forced-ephemeral) --")
+        print("only run this once you've confirmed mlflow_daytona_week4.db looks right:")
         print(f"  daytona stop {sandbox.id}")
-        print(f"  daytona delete {sandbox.id}")
         print("=" * 70)
 
 
