@@ -93,6 +93,11 @@ REPO_URL = "https://github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger.
 # removes the ambiguity for both APIs.
 REPO_DIR = "/workspace/sequential-rec-from-sasrec-to-tiger"
 
+# Explicit path to the installed uv binary rather than bare "uv": each
+# sandbox.process.exec() call may be a fresh non-login shell that never sources
+# the rc file the uv installer appends its PATH entry to.
+UV = "$HOME/.local/bin/uv"
+
 # CPU cores requested for the sandbox. Used both for the Resources request AND
 # exported to the training process as RECBOLE_NUM_THREADS so it caps its CPU
 # thread pools to this exact number. This has to be passed explicitly: inside
@@ -214,13 +219,9 @@ def run_streaming(sandbox, session_id: str, command: str, cwd: str | None = None
         time.sleep(TRAIN_POLL_SEC)
 
 
-def main(models: list[str], budget_map: dict, local_db_path: str) -> None:
-    api_key = os.environ.get("DAYTONA_API_KEY")
-    if not api_key:
-        print("Set DAYTONA_API_KEY first (app.daytona.io/dashboard/keys)", file=sys.stderr)
-        sys.exit(1)
-
-    # Check the local data file BEFORE creating (and paying for) a sandbox.
+def _require_local_data() -> Path:
+    """ML-1M ratings.dat must exist locally: grouplens blocks the sandbox's IP,
+    so we upload our copy instead of letting the sandbox download it."""
     local_ratings = Path("data/raw/ml-1m/ratings.dat")
     if not local_ratings.exists():
         print(
@@ -230,9 +231,13 @@ def main(models: list[str], budget_map: dict, local_db_path: str) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    return local_ratings
 
-    daytona = Daytona(DaytonaConfig(api_key=api_key))
 
+def provision_sandbox(daytona, local_ratings: Path):
+    """Create a GPU sandbox and get it ready to train: install git/curl/uv, clone
+    the repo, uv sync, and upload the ML-1M data. Returns the sandbox. Shared by
+    the local-driven (main) and autonomous (main_detached) paths."""
     print("Creating GPU sandbox (RTX 4090, falling back to RTX Pro 6000 / RTX 5090)...")
     sandbox = daytona.create(
         CreateSandboxFromImageParams(
@@ -240,96 +245,142 @@ def main(models: list[str], budget_map: dict, local_db_path: str) -> None:
             resources=Resources(
                 cpu=SANDBOX_CPUS,
                 memory=32,  # GB -- generous headroom (per-GPU cap is 192GB); the
-                # maxlen-200 augmented sequences pushed RSS to ~8GB at 4 cores,
-                # so give room for more parallelism without risking OOM.
-                disk=30,  # GB -- explicit and modest: ML-1M + code + docker
-                # layers don't need much. Not specifying disk risks a large
-                # default that can push you over an org-wide storage cap
-                # (we hit "Total disk limit exceeded. Maximum allowed:
-                # 300GiB" on the first real run -- check app.daytona.io for
-                # leftover sandboxes from earlier attempts/experiments if
-                # you still hit this after adding an explicit disk size).
+                # maxlen-200 augmented sequences pushed RSS to ~8GB at 4 cores.
+                disk=30,  # GB -- explicit and modest; not specifying risks a large
+                # default that can trip an org-wide storage cap.
                 gpu=1,
                 gpu_type=[GpuType.RTX_4090, GpuType.RTX_PRO_6000, GpuType.RTX_5090],
             ),
-            # Required by Daytona for GPU sandboxes ("must be ephemeral") --
-            # deletes the sandbox the instant it stops. Not optional; see the
-            # module docstring's safety notes for what this means in practice.
+            # Required by Daytona for GPU sandboxes ("must be ephemeral") -- deletes
+            # the sandbox the instant it stops. auto_stop_interval=0 disables the
+            # idle timer so a multi-hour run can't get stopped (-> deleted) between
+            # epochs. NOTE for the detached path: idle here means no API/toolbox
+            # activity, so a detached in-sandbox run MUST keep auto_stop at 0 or it
+            # could be killed mid-training; it cleans up by self-deleting instead.
             auto_delete_interval=0,
-            # Disables auto-stop-on-idle so a multi-hour training run can't
-            # get stopped (-> immediately deleted, per the line above) by an
-            # inactivity timer between epochs.
             auto_stop_interval=0,
         ),
         timeout=180,  # GPU provisioning can take longer than the 60s default
     )
     print(f"Sandbox created: id={sandbox.id}")
 
-    # Explicit path to the installed uv binary rather than bare "uv": each
-    # sandbox.process.exec() call may be a fresh non-login shell that never
-    # sources the rc file the uv installer appends its PATH entry to.
-    uv = "$HOME/.local/bin/uv"
+    run(sandbox, "apt-get update -qq && apt-get install -qq -y git curl")
+    run(sandbox, f"git clone --quiet {REPO_URL} {REPO_DIR}")
+    run(sandbox, "curl -LsSf https://astral.sh/uv/install.sh | sh")
+    run(sandbox, f"{UV} sync -q", cwd=REPO_DIR)
+
+    run(sandbox, f"mkdir -p {REPO_DIR}/data/raw/ml-1m")
+    print(f"\n(uploading {local_ratings} -> sandbox:{REPO_DIR}/data/raw/ml-1m/ratings.dat)")
+    sandbox.fs.upload_file(str(local_ratings), f"{REPO_DIR}/data/raw/ml-1m/ratings.dat")
+    return sandbox
+
+
+def budgets_arg_for(budget_map: dict, model: str) -> str:
+    """One "epochs:run_name" token per budget, comma-joined (no spaces -> a single
+    shell arg): e.g. "200:sasrec_recbole_1x,800:...,2000:...`."""
+    return ",".join(f"{epochs}:{name}" for epochs, name in budget_map[model])
+
+
+def main(models: list[str], budget_map: dict, local_db_path: str) -> None:
+    """Local-driven path: this process stays connected, streams progress, and
+    downloads mlflow.db. Needs the laptop awake for the whole run. See
+    main_detached for the Mac-independent path."""
+    api_key = os.environ.get("DAYTONA_API_KEY")
+    if not api_key:
+        print("Set DAYTONA_API_KEY first (app.daytona.io/dashboard/keys)", file=sys.stderr)
+        sys.exit(1)
+    local_ratings = _require_local_data()
+    daytona = Daytona(DaytonaConfig(api_key=api_key))
+    sandbox = provision_sandbox(daytona, local_ratings)
 
     try:
-        # -qq / --quiet everywhere below just keeps the log small. (An earlier
-        # theory blamed large/\r-heavy output for "hanging" the run right after
-        # apt-get; that turned out to be stdout block-buffering hiding the
-        # progress, not a real hang -- see the module-level reconfigure. The
-        # quiet flags are harmless to keep and do cut log noise.)
-        run(sandbox, "apt-get update -qq && apt-get install -qq -y git curl")
-        run(sandbox, f"git clone --quiet {REPO_URL} {REPO_DIR}")
-        run(sandbox, "curl -LsSf https://astral.sh/uv/install.sh | sh")
-        run(sandbox, f"{uv} sync -q", cwd=REPO_DIR)
+        run(sandbox, f"{UV} run python -m src.recbole_utils.convert_to_atomic", cwd=REPO_DIR)
 
-        # files.grouplens.org resets the connection from inside this sandbox
-        # every time (5/5 retries, with and without a browser User-Agent) --
-        # looks like it's blocking the cloud provider's outbound IP range
-        # rather than anything fixable client-side. Upload the already-
-        # downloaded local copy instead of letting the sandbox fetch it.
-        # (local_ratings existence was already checked before sandbox creation.)
-        run(sandbox, f"mkdir -p {REPO_DIR}/data/raw/ml-1m")
-        print(f"\n(uploading {local_ratings} -> sandbox:{REPO_DIR}/data/raw/ml-1m/ratings.dat)")
-        sandbox.fs.upload_file(str(local_ratings), f"{REPO_DIR}/data/raw/ml-1m/ratings.dat")
-
-        run(sandbox, f"{uv} run python -m src.recbole_utils.convert_to_atomic", cwd=REPO_DIR)
-
-        # One long-lived session for all training runs. Training goes through
-        # run_streaming (not the blocking run()) so each multi-hour run prints
-        # progress live -- otherwise the log looks frozen for hours and the run
-        # is indistinguishable from a real stall.
         train_session = "week4-training"
         sandbox.process.create_session(train_session)
 
         for model in models:
-            budgets = budget_map[model]
-            # One "epochs:run_name" token per budget, comma-joined (no spaces, so
-            # it's a single shell arg). recbole_run trains once to the largest
-            # budget and logs a result for each budget from that trajectory.
-            budgets_arg = ",".join(f"{epochs}:{name}" for epochs, name in budgets)
             run_streaming(
                 sandbox,
                 train_session,
-                f"{uv} run python -m src.recbole_run --model {model} --budgets {budgets_arg}",
+                f"{UV} run python -m src.recbole_run --model {model} "
+                f"--budgets {budgets_arg_for(budget_map, model)}",
                 cwd=REPO_DIR,
             )
-            # Download after every model, not just at the end -- a GPU sandbox is
-            # deleted the instant it stops (see docstring), so a crash on the 2nd
-            # model must not cost us the 1st model's results too.
             sandbox.fs.download_file(f"{REPO_DIR}/mlflow.db", local_db_path)
             print(f"  -> synced mlflow.db to {local_db_path} after {model}")
 
         print(f"\nFinal mlflow.db synced to {local_db_path}")
-        print("Bring this file back to your main Claude Code session to merge the")
-        print("new RecBole runs into results/tables/master.md and REPRODUCTION_LOG.md.")
 
     finally:
         print("\n" + "=" * 70)
         print(f"Sandbox ID: {sandbox.id}")
         print("This sandbox is STILL RUNNING and billing per second.")
-        print("Stopping it deletes it immediately (GPU sandboxes are forced-ephemeral) --")
-        print(f"only run this once you've confirmed {local_db_path} looks right:")
+        print(f"Stop it once you've confirmed {local_db_path} looks right:")
         print(f"  daytona stop {sandbox.id}")
         print("=" * 70)
+
+
+def main_detached(models: list[str], budget_map: dict) -> None:
+    """Autonomous, Mac-independent path. For each model: provision a sandbox, then
+    launch scripts/daytona_remote_runner.sh DETACHED inside it (nohup + run_async)
+    so training survives this laptop sleeping/closing. The runner pushes results to
+    GitHub and self-stops its sandbox when done. This launcher exits right after
+    firing both runners -- nothing here needs to stay running."""
+    api_key = os.environ.get("DAYTONA_API_KEY")
+    github_token = os.environ.get("GITHUB_TOKEN")
+    if not api_key:
+        print("Set DAYTONA_API_KEY first (app.daytona.io/dashboard/keys)", file=sys.stderr)
+        sys.exit(1)
+    if not github_token:
+        print(
+            "--detached needs GITHUB_TOKEN (a PAT with contents:write) so the sandbox "
+            "can push results back. Add it to ~/.zshenv and re-run.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    local_ratings = _require_local_data()
+    daytona = Daytona(DaytonaConfig(api_key=api_key))
+
+    for model in models:
+        print(f"\n########## provisioning autonomous sandbox for {model} ##########")
+        sandbox = provision_sandbox(daytona, local_ratings)
+
+        # Write the credentials + params to a file INSIDE the sandbox (via upload,
+        # not an exec string) so secrets never appear in a command line or log.
+        env_lines = (
+            f"export MODEL={model}\n"
+            f"export BUDGETS={budgets_arg_for(budget_map, model)}\n"
+            f"export SANDBOX_ID={sandbox.id}\n"
+            f"export DAYTONA_API_KEY={api_key}\n"
+            f"export GITHUB_TOKEN={github_token}\n"
+        )
+        env_remote = f"{REPO_DIR}/.week4_env"
+        sandbox.fs.upload_file(env_lines.encode(), env_remote)
+
+        # Fire the runner detached: run_async returns immediately and the command
+        # keeps running server-side after we disconnect; nohup + redirect makes it
+        # independent of the session too. We source the env file, then delete it
+        # (the exported vars persist into the nohup'd runner) so the token doesn't
+        # linger on disk during the multi-day run.
+        launch = (
+            f"cd {REPO_DIR} && chmod +x scripts/daytona_remote_runner.sh && "
+            f"set -a && . {env_remote} && set +a && rm -f {env_remote} && "
+            f"nohup bash scripts/daytona_remote_runner.sh > run.log 2>&1 &"
+        )
+        session = f"week4-launch-{model}"
+        sandbox.process.create_session(session)
+        sandbox.process.execute_session_command(
+            session, SessionExecuteRequest(command=launch, run_async=True)
+        )
+        print(f"  -> {model} runner launched DETACHED in sandbox {sandbox.id}")
+
+    print("\n" + "=" * 70)
+    print("Autonomous runs launched. This laptop is no longer needed -- you can")
+    print("close it. Each sandbox trains, pushes results to GitHub, and self-stops.")
+    print("Watch progress: `git pull` and look for mlflow_daytona_week4_<MODEL>.db")
+    print("and WEEK4_<MODEL>_DONE commits, or `daytona ssh <id>` + `tail -f run.log`.")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
@@ -348,12 +399,25 @@ if __name__ == "__main__":
         help="Use tiny budgets (~30 epochs) to validate the pipeline end-to-end cheaply "
         "before committing to the multi-day real sweep.",
     )
+    parser.add_argument(
+        "--detached",
+        action="store_true",
+        help="Autonomous, Mac-independent mode: provision one sandbox per model, launch "
+        "the runner detached inside it (training survives this laptop sleeping/closing), and "
+        "exit. Each sandbox pushes results to GitHub and self-stops. Needs GITHUB_TOKEN set.",
+    )
     args = parser.parse_args()
 
     budget_map = SMOKE_BUDGETS if args.smoke else BUDGETS
     models = [args.model] if args.model else list(budget_map.keys())
-    # Distinct db filename per variant so parallel per-model runs (and smoke runs)
-    # don't clobber each other's downloaded results in the same working directory.
-    suffix = (f"_{args.model}" if args.model else "") + ("_smoke" if args.smoke else "")
-    db_path = f"mlflow_daytona_week4{suffix}.db"
-    main(models, budget_map, db_path)
+
+    if args.detached:
+        # Autonomous path: one sandbox per model, fire-and-forget. Results come back
+        # via GitHub (mlflow_daytona_week4_<MODEL>.db), not a local download.
+        main_detached(models, budget_map)
+    else:
+        # Local-driven path: distinct db filename per variant so parallel per-model
+        # runs (and smoke runs) don't clobber each other's downloads.
+        suffix = (f"_{args.model}" if args.model else "") + ("_smoke" if args.smoke else "")
+        db_path = f"mlflow_daytona_week4{suffix}.db"
+        main(models, budget_map, db_path)

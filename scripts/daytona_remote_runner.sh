@@ -1,96 +1,103 @@
 #!/bin/bash
-# Runs the Week 4 RecBole training-budget sweep FROM INSIDE a Daytona GPU
-# sandbox, pushing results to GitHub after every single experiment.
+# Fully autonomous, Mac-independent Week 4 runner. Runs INSIDE a Daytona GPU
+# sandbox, detached, so training survives your laptop sleeping / closing / going
+# offline -- nothing on your machine drives it. When done it pushes results to
+# GitHub and STOPS (deletes) its own sandbox so there is no idle billing.
 #
-# Why this exists instead of relying solely on scripts/daytona_week4.py:
-# that script drives the sandbox from your local machine over a long-lived
-# connection (sandbox.process.exec calls, several hours total across 6
-# experiments). If your laptop sleeps, loses wifi, or the terminal closes
-# mid-run, the whole thing can get interrupted -- this happened earlier in
-# this project on local MPS training (a 10-hour laptop sleep silently paused
-# a background job). Running this script INSIDE the sandbox under tmux makes
-# progress independent of your local machine staying connected: SSH in once,
-# kick it off, detach, and it keeps running server-side even if you close
-# your laptop.
+# It is normally started for you by `scripts/daytona_week4.py --detached`, which
+# provisions the sandbox, uploads the ML-1M data (grouplens blocks the sandbox's
+# IP, so it can't self-download), injects the env vars below, and launches this
+# under nohup, then exits. You do not run this by hand.
 #
-# Usage (from your local machine):
-#   daytona ssh <sandbox-id>
-#   cd sequential-rec-from-sasrec-to-tiger && git pull
-#   export GITHUB_TOKEN=ghp_...          # PAT with repo write access
-#   chmod +x scripts/daytona_remote_runner.sh
-#   tmux new -d -s week4 'bash scripts/daytona_remote_runner.sh 2>&1 | tee run.log'
-#   # now safe to disconnect -- check back later with:
-#   #   daytona ssh <sandbox-id>
-#   #   tmux attach -t week4          (or: tail -f sequential-rec-from-sasrec-to-tiger/run.log)
+# Required env (injected by the launcher):
+#   MODEL            SASRec | BERT4Rec         (one model per sandbox, for parallelism)
+#   BUDGETS          "200:sasrec_recbole_1x,800:..._4x,2000:..._10x"  (recbole_run --budgets)
+#   GITHUB_TOKEN     PAT with contents:write   (push results back to the repo)
+#   DAYTONA_API_KEY  Daytona key               (self-stop at the end)
+#   SANDBOX_ID       this sandbox's id         (self-stop target)
 #
-# Keep the EXPERIMENTS list here in sync with scripts/daytona_week4.py's
-# EXPERIMENTS list if you change epoch budgets -- there's no shared config
-# file between the Python driver and this shell script.
+# Results land in the repo as mlflow_daytona_week4_<MODEL>.db on branch main, plus
+# a WEEK4_<MODEL>_DONE marker commit. Watch progress by pulling the repo, or SSH
+# in and `tail -f run.log`.
 
 set -uo pipefail
 
 UV="$HOME/.local/bin/uv"
 REPO_DIR="$(pwd)"
-LOCAL_DB="mlflow_daytona_week4.db"
+MODEL="${MODEL:?MODEL not set}"
+BUDGETS="${BUDGETS:?BUDGETS not set}"
+LOCAL_DB="mlflow_daytona_week4_${MODEL}.db"
 
-if [ -z "${GITHUB_TOKEN:-}" ]; then
-  echo "GITHUB_TOKEN is not set -- results will run locally on the sandbox but"
-  echo "won't be pushed to GitHub after each experiment. Set it and re-run if"
-  echo "you want the incremental push-after-each-run safety net."
-fi
+echo "=== Week 4 autonomous runner: model=${MODEL} budgets=${BUDGETS} ==="
 
+# Authenticate git push if a token was injected (results safety net).
 if [ -n "${GITHUB_TOKEN:-}" ]; then
   git remote set-url origin "https://${GITHUB_TOKEN}@github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger.git"
+  git config user.email "week4-runner@daytona.local"
+  git config user.name "week4-daytona-runner"
+else
+  echo "WARNING: GITHUB_TOKEN not set -- results will stay only in this sandbox."
 fi
 
-sync_results() {
-  local run_name="$1"
-  cp mlflow.db "$LOCAL_DB" 2>/dev/null || { echo "  (no mlflow.db yet to sync)"; return; }
-  if [ -n "${GITHUB_TOKEN:-}" ]; then
-    git add "$LOCAL_DB"
-    git commit -m "Week 4 (Daytona GPU): sync after ${run_name}" >/dev/null 2>&1
-    if git push origin main; then
-      echo "  -> pushed $LOCAL_DB to GitHub after ${run_name}"
-    else
-      echo "  -> WARNING: push failed after ${run_name} (network blip?); mlflow.db is still safe on disk locally"
-    fi
+push_results() {
+  local label="$1"
+  cp mlflow.db "$LOCAL_DB" 2>/dev/null || { echo "  (no mlflow.db yet to push)"; return; }
+  [ -z "${GITHUB_TOKEN:-}" ] && return
+  # -f: .gitignore has `mlflow*.db`, so a plain `git add` would silently skip the
+  # results db and push nothing useful. Force-add this specific results file.
+  git add -f "$LOCAL_DB"
+  git commit -m "Week 4 (Daytona ${MODEL}): ${label}" >/dev/null 2>&1
+  # Rebase-pull first: the two per-model sandboxes push the same branch, so land
+  # each other's commits instead of racing/rejecting.
+  git pull --rebase --autostash origin main >/dev/null 2>&1 || true
+  if git push origin main; then
+    echo "  -> pushed ${LOCAL_DB} to GitHub (${label})"
+  else
+    echo "  -> WARNING: push failed (${label}); ${LOCAL_DB} is still on the sandbox disk"
   fi
 }
 
-echo "=== Downloading data ==="
-"$UV" run python -m src.data.download --dest data/raw --dataset ml-1m
+self_stop() {
+  # Delete this sandbox from within itself so there's no idle billing. Results are
+  # already on GitHub, so even if this fails nothing is lost -- the sandbox just
+  # keeps billing until stopped manually / by the recover tool.
+  if [ -n "${DAYTONA_API_KEY:-}" ] && [ -n "${SANDBOX_ID:-}" ]; then
+    echo "=== Self-stopping sandbox ${SANDBOX_ID} (results already pushed) ==="
+    "$UV" run python - <<'PY'
+import os
+from daytona import Daytona, DaytonaConfig
+d = Daytona(DaytonaConfig(api_key=os.environ["DAYTONA_API_KEY"]))
+d.delete(d.get(os.environ["SANDBOX_ID"]))
+print("sandbox delete requested")
+PY
+  else
+    echo "DAYTONA_API_KEY/SANDBOX_ID not set -- NOT self-stopping. Stop it manually."
+  fi
+}
+
+# Data was uploaded by the launcher (grouplens blocks the sandbox IP); just build
+# the RecBole atomic files.
+echo "=== convert_to_atomic ==="
 "$UV" run python -m src.recbole_utils.convert_to_atomic
 
-# (model, run_name, epochs) -- keep in sync with scripts/daytona_week4.py
-EXPERIMENTS=(
-  "SASRec sasrec_recbole_1x 200"
-  "SASRec sasrec_recbole_4x 800"
-  "SASRec sasrec_recbole_10x 2000"
-  "BERT4Rec bert4rec_recbole_1x 200"
-  "BERT4Rec bert4rec_recbole_4x 800"
-  "BERT4Rec bert4rec_recbole_10x 2000"
-)
-
-for exp in "${EXPERIMENTS[@]}"; do
-  read -r model run_name epochs <<< "$exp"
-  echo ""
-  echo "=== $run_name ($model, $epochs epochs) ==="
-  if "$UV" run python -m src.recbole_run --model "$model" --epochs "$epochs" --run-name "$run_name"; then
-    echo "  -> $run_name finished"
-  else
-    echo "  -> WARNING: $run_name FAILED (exit $?) -- continuing to the next experiment"
-  fi
-  sync_results "$run_name"
-done
-
-echo ""
-echo "=== All experiments attempted. Final sync + marker file. ==="
-touch WEEK4_SWEEP_DONE
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  git add WEEK4_SWEEP_DONE
-  git commit -m "Week 4 (Daytona GPU): sweep complete" >/dev/null 2>&1
-  git push origin main
+# One trajectory to the largest budget; recbole_run logs every budget milestone.
+echo "=== training: ${MODEL} (${BUDGETS}) ==="
+if "$UV" run python -m src.recbole_run --model "$MODEL" --budgets "$BUDGETS"; then
+  echo "  -> ${MODEL} training complete"
+else
+  echo "  -> WARNING: ${MODEL} training FAILED (exit $?) -- pushing whatever synced, then stopping"
 fi
-echo "Done. Check run.log / mlflow_daytona_week4.db / the GitHub repo for results."
-echo "Remember: stopping this GPU sandbox deletes it immediately. Only stop it"
-echo "once you've confirmed results are safe (pushed to GitHub, or downloaded)."
+
+push_results "final results"
+
+# Completion marker so a watcher can tell this model is done from GitHub alone.
+touch "WEEK4_${MODEL}_DONE"
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  git add "WEEK4_${MODEL}_DONE"
+  git commit -m "Week 4 (Daytona ${MODEL}): sweep complete" >/dev/null 2>&1
+  git pull --rebase --autostash origin main >/dev/null 2>&1 || true
+  git push origin main || echo "  -> WARNING: marker push failed"
+fi
+
+self_stop
+echo "=== Done. ==="
