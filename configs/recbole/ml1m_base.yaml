@@ -15,13 +15,14 @@ user_inter_num_interval: "[5,inf)"
 item_inter_num_interval: "[5,inf)"
 
 # Sequential model settings
-# NOTE: reduced from 200 (our own SASRec headline maxlen) to 50 purely for local
-# compute tractability -- RecBole's per-position sequential augmentation on the
-# full ML-1M (dense, avg 165 actions/user) with maxlen=200 item-list tensors made
-# a single-epoch smoke test take >20 minutes just to build the dataset/dataloaders
-# with no output. Our own A2 ablation (maxlen=50 vs 200, EXECUTION_PLAN.md Week 3)
-# gives the expected gap to correct for when comparing against this.
-MAX_ITEM_LIST_LENGTH: 50
+# Matches our own SASRec headline maxlen (configs/sasrec_ml1m.yaml). This was
+# temporarily dropped to 50 during local Mac (CPU/MPS) smoke testing, where
+# RecBole's per-position sequential augmentation on the full ML-1M (dense, avg
+# 165 actions/user) with maxlen=200 item-list tensors made dataset/dataloader
+# construction extremely slow and, combined with save_dataloaders, produced a
+# 6.4GB pickle that nearly filled a 17GB-free disk. Restored to 200 for GPU-box
+# runs, which should have more disk/memory headroom and a much faster CUDA path.
+MAX_ITEM_LIST_LENGTH: 200
 ITEM_LIST_LENGTH_FIELD: item_length
 LIST_SUFFIX: _list
 
@@ -54,14 +55,13 @@ show_progress: false
 log_wandb: false
 
 # Cache the 5-core-filtered raw Dataset object (cheap, ~32MB, reused across
-# every model/epoch-budget combo). Dataloader caching is deliberately OFF: with
-# MAX_ITEM_LIST_LENGTH=200 it produced a 6.4GB-and-growing pickle mid-write
-# (the augmented per-position sequences x uni100 negative candidate lists for
-# ~1M rows), which both ate most of a 17GB-free disk and was the actual reason
-# the first smoke test never returned in 20+ minutes -- it wasn't stuck, it was
-# slowly serializing a multi-gigabyte object graph. Re-building the dataloaders
-# from the cached Dataset each run is slower than loading a cache would be, but
-# bounded and disk-safe.
+# every model/epoch-budget combo). Dataloader caching is left OFF: with
+# MAX_ITEM_LIST_LENGTH=200 it produces a multi-gigabyte pickle (the augmented
+# per-position sequences x uni100 negative candidate lists for ~1M rows) that
+# nearly filled a 17GB-free local disk. If your GPU box has ample disk (say
+# 50GB+ free), it's safe to flip save_dataloaders to true and set
+# dataloaders_save_path -- it will make the 2nd-6th of the 6 planned runs
+# (1x/4x/10x x {SASRec, BERT4Rec}) skip re-building the augmented dataloaders.
 save_dataset: true
 dataset_save_path: 'saved/ml-1m-dataset.pth'
 save_dataloaders: false
