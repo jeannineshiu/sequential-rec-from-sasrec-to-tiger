@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import shutil
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -13,9 +14,30 @@ ML1M_MD5 = "c4d9eecfca2ab87c1945afe126590906"
 
 BEAUTY_URL = "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/ratings_Beauty.csv"
 
+MAX_RETRIES = 5
+RETRY_BACKOFF_SEC = 5
+
 
 def _md5(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
+
+
+def _urlopen_with_retry(url: str):
+    """urllib.request.urlopen with retries -- cloud sandboxes (Daytona, etc.)
+    have occasionally reset large/slow connections outbound (observed:
+    ConnectionResetError on files.grouplens.org mid-handshake). Transient,
+    not a code bug, so just retry with backoff rather than failing the whole
+    multi-hour run over a single network blip."""
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return urllib.request.urlopen(url)
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            last_error = e
+            print(f"  download attempt {attempt}/{MAX_RETRIES} failed: {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_BACKOFF_SEC * attempt)
+    raise last_error
 
 
 def download_ml1m(dest_dir: Path) -> Path:
@@ -29,7 +51,7 @@ def download_ml1m(dest_dir: Path) -> Path:
 
     dest_dir.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {ML1M_URL} ...")
-    with urllib.request.urlopen(ML1M_URL) as resp:
+    with _urlopen_with_retry(ML1M_URL) as resp:
         raw = resp.read()
 
     digest = _md5(raw)
@@ -57,7 +79,7 @@ def download_beauty(dest_dir: Path) -> Path:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {BEAUTY_URL} ...")
-    with urllib.request.urlopen(BEAUTY_URL) as resp, open(ratings_file, "wb") as f:
+    with _urlopen_with_retry(BEAUTY_URL) as resp, open(ratings_file, "wb") as f:
         shutil.copyfileobj(resp, f)
 
     print(f"Saved to {ratings_file}")
