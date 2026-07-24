@@ -77,6 +77,26 @@ for _name, _replacement in _NUMPY2_SHIMS.items():
         setattr(np, _name, getattr(np, _replacement))
 
 import torch  # noqa: E402
+
+# PyTorch 2.6 flipped torch.load's default to weights_only=True, which cannot
+# unpickle RecBole's checkpoints (they store the full config/optimizer state, not
+# just tensors). RecBole's trainer.evaluate() calls torch.load internally with the
+# default and dies with "Weights only load failed ... Unsupported operand". This
+# is why every run that actually reached post-training evaluation crashed (our
+# earlier runs were all stopped mid-training, so we never hit it until now). We
+# only ever load checkpoints this same process just wrote, so restoring the old
+# weights_only=False behavior is safe. Must be patched before RecBole loads any
+# checkpoint (trainer.evaluate / resume).
+_orig_torch_load = torch.load
+
+
+def _torch_load_full(*args, **kwargs):
+    kwargs.setdefault("weights_only", False)
+    return _orig_torch_load(*args, **kwargs)
+
+
+torch.load = _torch_load_full
+
 from recbole.config import Config  # noqa: E402
 from recbole.data import create_dataset, data_preparation  # noqa: E402
 from recbole.utils import get_model, get_trainer, init_logger, init_seed  # noqa: E402
