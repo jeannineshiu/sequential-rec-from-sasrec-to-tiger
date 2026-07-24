@@ -77,11 +77,16 @@ EXPERIMENTS = [
 ]
 
 
-def run(sandbox, command: str, cwd: str | None = None) -> None:
+SETUP_TIMEOUT_SEC = 300  # setup steps should finish in minutes, not hours
+
+
+def run(sandbox, command: str, cwd: str | None = None, timeout: float = SETUP_TIMEOUT_SEC) -> None:
+    """timeout=0 means unlimited -- only pass that for the actual multi-hour
+    training calls. Setup steps (apt-get/git/uv sync) get a bounded timeout
+    so a mystery hang (seen 3x in a row after apt-get's output, cause
+    unconfirmed) raises an exception instead of blocking forever."""
     print(f"\n$ {command}")
-    result = sandbox.process.exec(
-        command, cwd=cwd, timeout=0
-    )  # 0 = no timeout (multi-hour training)
+    result = sandbox.process.exec(command, cwd=cwd, timeout=timeout)
     print(result.result)
     if result.exit_code != 0:
         raise RuntimeError(f"command failed (exit {result.exit_code}): {command}")
@@ -131,11 +136,18 @@ def main() -> None:
     uv = "$HOME/.local/bin/uv"
 
     try:
-        # The pytorch/pytorch:*-runtime image is minimal and lacks git/curl.
-        run(sandbox, "apt-get update && apt-get install -y git curl")
-        run(sandbox, f"git clone {REPO_URL} {REPO_DIR}")
+        # -qq / --quiet everywhere below: three separate attempts all hung
+        # indefinitely (0% CPU, connection to Daytona's backend established
+        # but no further progress) right after apt-get's very verbose output,
+        # never reaching git clone's own output. Best guess: something about
+        # a command producing a huge amount of output, or git clone's default
+        # \r-overwriting progress meter, confuses whatever mechanism the SDK
+        # uses to detect a command has finished streaming. Quiet flags avoid
+        # both large output volume and \r-based progress entirely.
+        run(sandbox, "apt-get update -qq && apt-get install -qq -y git curl")
+        run(sandbox, f"git clone --quiet {REPO_URL} {REPO_DIR}")
         run(sandbox, "curl -LsSf https://astral.sh/uv/install.sh | sh")
-        run(sandbox, f"{uv} sync", cwd=REPO_DIR)
+        run(sandbox, f"{uv} sync -q", cwd=REPO_DIR)
 
         # files.grouplens.org resets the connection from inside this sandbox
         # every time (5/5 retries, with and without a browser User-Agent) --
@@ -163,6 +175,7 @@ def main() -> None:
                 f"{uv} run python -m src.recbole_run --model {model} "
                 f"--epochs {epochs} --run-name {run_name}",
                 cwd=REPO_DIR,
+                timeout=0,  # unlimited -- this is the actual multi-hour training call
             )
             # Download after every experiment, not just at the end -- a GPU
             # sandbox is deleted the instant it stops (see docstring), so a
