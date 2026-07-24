@@ -25,6 +25,14 @@ results/checkpoints/
 # Notebooks checkpoints
 .ipynb_checkpoints/
 
+# RecBole (Week 4): regenerable atomic files, cached dataset objects, tensorboard logs
+dataset/
+saved/
+log_tensorboard/
+
+# Claude Code runtime state (not project content)
+.claude/
+
 # Personal notes (not part of the repo)
 notes/
 

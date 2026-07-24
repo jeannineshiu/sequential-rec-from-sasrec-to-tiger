@@ -1,0 +1,67 @@
+# Shared RecBole settings for the Week 4 BERT4Rec-vs-SASRec training-budget comparison.
+# Model-specific overrides (epochs, model name) are passed by src/recbole_run.py.
+
+data_path: 'dataset/'
+USER_ID_FIELD: user_id
+ITEM_ID_FIELD: item_id
+RATING_FIELD: rating
+TIME_FIELD: timestamp
+
+load_col:
+  inter: [user_id, item_id, rating, timestamp]
+
+# 5-core filtering, same threshold as our own preprocessing (src/data/preprocess.py)
+user_inter_num_interval: "[5,inf)"
+item_inter_num_interval: "[5,inf)"
+
+# Sequential model settings
+# NOTE: reduced from 200 (our own SASRec headline maxlen) to 50 purely for local
+# compute tractability -- RecBole's per-position sequential augmentation on the
+# full ML-1M (dense, avg 165 actions/user) with maxlen=200 item-list tensors made
+# a single-epoch smoke test take >20 minutes just to build the dataset/dataloaders
+# with no output. Our own A2 ablation (maxlen=50 vs 200, EXECUTION_PLAN.md Week 3)
+# gives the expected gap to correct for when comparing against this.
+MAX_ITEM_LIST_LENGTH: 50
+ITEM_LIST_LENGTH_FIELD: item_length
+LIST_SUFFIX: _list
+
+# Leave-one-out split, same protocol as our own leave_one_out_split
+eval_args:
+  split: {'LS': 'valid_and_test'}
+  group_by: user
+  order: TO
+  mode: {'valid': 'uni100', 'test': 'uni100'} # 1 positive + 100 uniform negatives, matches our sampled evaluator
+
+metrics: ["Hit", "NDCG"]
+topk: [10]
+valid_metric: NDCG@10
+valid_metric_bigger: true
+
+train_batch_size: 128
+eval_batch_size: 256
+learning_rate: 0.001
+learner: adam
+# SASRec/BERT4Rec both default to loss_type: CE (full softmax over items,
+# no in-batch negative sampling needed during training) -- must be None to match.
+train_neg_sample_args: ~
+
+# We control epoch budgets explicitly for the training-budget experiment, so
+# disable early stopping (stopping_step >= epochs in every config we'll run).
+stopping_step: 100000
+eval_step: 1
+
+show_progress: false
+log_wandb: false
+
+# Cache the 5-core-filtered raw Dataset object (cheap, ~32MB, reused across
+# every model/epoch-budget combo). Dataloader caching is deliberately OFF: with
+# MAX_ITEM_LIST_LENGTH=200 it produced a 6.4GB-and-growing pickle mid-write
+# (the augmented per-position sequences x uni100 negative candidate lists for
+# ~1M rows), which both ate most of a 17GB-free disk and was the actual reason
+# the first smoke test never returned in 20+ minutes -- it wasn't stuck, it was
+# slowly serializing a multi-gigabyte object graph. Re-building the dataloaders
+# from the cached Dataset each run is slower than loading a cache would be, but
+# bounded and disk-safe.
+save_dataset: true
+dataset_save_path: 'saved/ml-1m-dataset.pth'
+save_dataloaders: false
