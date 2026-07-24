@@ -16,7 +16,7 @@ data/processed/
 # MLflow
 mlruns/
 mlartifacts/
-mlflow.db
+mlflow*.db
 
 # Results: master.md and figures ARE committed deliverables (script-generated,
 # referenced from README.md) -- only the large binary checkpoints are excluded.
