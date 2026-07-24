@@ -351,6 +351,11 @@ def main_detached(models: list[str], budget_map: dict) -> None:
         env_lines = (
             f"export MODEL={model}\n"
             f"export BUDGETS={budgets_arg_for(budget_map, model)}\n"
+            # Cap CPU threads exactly like the local-driven path's run_streaming.
+            # Without this the detached training process auto-detects 16 cores and,
+            # with worker=4 dataloader processes, oversubscribes (4x16 threads).
+            f"export RECBOLE_NUM_THREADS={TRAIN_THREADS}\n"
+            f"export OMP_NUM_THREADS={TRAIN_THREADS}\n"
             f"export SANDBOX_ID={sandbox.id}\n"
             f"export DAYTONA_API_KEY={api_key}\n"
             f"export GITHUB_TOKEN={github_token}\n"
