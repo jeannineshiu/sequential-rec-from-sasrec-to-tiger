@@ -55,6 +55,7 @@ per second while the sandbox is running):
    the end, and stop/delete the sandbox manually once you're done with it.
 """
 
+import argparse
 import os
 import sys
 import time
@@ -105,21 +106,34 @@ REPO_DIR = "/workspace/sequential-rec-from-sasrec-to-tiger"
 # cores). More cores speeds up the augmentation and the OMP/MKL/numpy paths.
 SANDBOX_CPUS = 16
 
-# (model, run_name, epochs) for the 1x/4x/10x training-budget sweep.
-# 200 epochs matches our own SASRec headline run (configs/sasrec_ml1m.yaml);
-# adjust here if you want different budgets before running.
-# Validation pass: run only the 1x budgets first to confirm the pipeline and
-# sanity-check the numbers, and to measure the real per-epoch time after the
-# batch-size speedup before committing to the multi-day full sweep. Restore the
-# 4x/10x rows below once 1x looks right.
-EXPERIMENTS = [
-    ("SASRec", "sasrec_recbole_1x", 200),
-    ("BERT4Rec", "bert4rec_recbole_1x", 200),
-    # ("SASRec", "sasrec_recbole_4x", 800),
-    # ("SASRec", "sasrec_recbole_10x", 2000),
-    # ("BERT4Rec", "bert4rec_recbole_4x", 800),
-    # ("BERT4Rec", "bert4rec_recbole_10x", 2000),
-]
+# Per-process CPU-thread cap for the training command (exported as
+# RECBOLE_NUM_THREADS). Deliberately lower than SANDBOX_CPUS: with RecBole
+# worker=4 dataloader processes, the 16 cores are meant to be used by the 4
+# parallel workers + main feeding the GPU, NOT by each process spawning 16
+# OMP/MKL threads. Capping each process low keeps 4 workers + main from
+# oversubscribing the 16 cores (the oversubscription that livelocked earlier).
+TRAIN_THREADS = 4
+
+# Per-model 1x/4x/10x training-budget milestones (epochs, run_name). Budgets
+# match our own SASRec headline (200 = configs/sasrec_ml1m.yaml). src/recbole_run
+# trains each model ONCE to the largest budget and recovers every smaller budget
+# from that single trajectory (see its docstring), so this is 2 training runs of
+# 2000 epochs, not 6 runs totalling 6000 epochs -- ~1/3 fewer epochs, no fidelity
+# loss. Every budget must be divisible by eval_step (10) so a validation lands on
+# each milestone.
+BUDGETS = {
+    "SASRec": [(200, "sasrec_recbole_1x"), (800, "sasrec_recbole_4x"), (2000, "sasrec_recbole_10x")],
+    "BERT4Rec": [(200, "bert4rec_recbole_1x"), (800, "bert4rec_recbole_4x"), (2000, "bert4rec_recbole_10x")],
+}
+
+# Tiny budgets for a cheap end-to-end pipeline check (--smoke): validates the
+# milestone-snapshot logic, worker=4 dataloading, and the batch/eval_step config
+# on ~30 epochs before committing to the multi-day real sweep. Divisible by
+# eval_step (10) so milestones land.
+SMOKE_BUDGETS = {
+    "SASRec": [(10, "sasrec_smoke_1x"), (20, "sasrec_smoke_2x")],
+    "BERT4Rec": [(10, "bert4rec_smoke_1x"), (20, "bert4rec_smoke_2x")],
+}
 
 
 SETUP_TIMEOUT_SEC = 300  # setup steps should finish in minutes, not hours
@@ -164,12 +178,14 @@ def run_streaming(sandbox, session_id: str, command: str, cwd: str | None = None
     This is the same buffering trap as the module-level stdout reconfigure,
     one level down on the sandbox side; forcing unbuffered stdout there makes
     epoch progress stream out line by line."""
-    # RECBOLE_NUM_THREADS: authoritative CPU-core count for the training process
-    # to cap its thread pools to (the sandbox can't detect the quota itself --
-    # see SANDBOX_CPUS). OMP_NUM_THREADS is set too as a belt-and-suspenders in
-    # case anything imports a numeric lib before recbole_run.py reads the env.
+    # RECBOLE_NUM_THREADS: authoritative per-process CPU-thread cap (the sandbox
+    # can't detect its quota itself -- see SANDBOX_CPUS/TRAIN_THREADS). Set to
+    # TRAIN_THREADS, not SANDBOX_CPUS, so RecBole's 4 dataloader workers + main
+    # don't each spawn 16 threads and oversubscribe. OMP_NUM_THREADS is set too
+    # as a belt-and-suspenders in case a numeric lib imports before recbole_run.py
+    # reads the env.
     env_command = (
-        f"RECBOLE_NUM_THREADS={SANDBOX_CPUS} OMP_NUM_THREADS={SANDBOX_CPUS} "
+        f"RECBOLE_NUM_THREADS={TRAIN_THREADS} OMP_NUM_THREADS={TRAIN_THREADS} "
         f"PYTHONUNBUFFERED=1 {command}"
     )
     full_cmd = f"cd {cwd} && {env_command}" if cwd else env_command
@@ -198,7 +214,7 @@ def run_streaming(sandbox, session_id: str, command: str, cwd: str | None = None
         time.sleep(TRAIN_POLL_SEC)
 
 
-def main() -> None:
+def main(models: list[str], budget_map: dict, local_db_path: str) -> None:
     api_key = os.environ.get("DAYTONA_API_KEY")
     if not api_key:
         print("Set DAYTONA_API_KEY first (app.daytona.io/dashboard/keys)", file=sys.stderr)
@@ -277,8 +293,6 @@ def main() -> None:
 
         run(sandbox, f"{uv} run python -m src.recbole_utils.convert_to_atomic", cwd=REPO_DIR)
 
-        local_db_path = "mlflow_daytona_week4.db"
-
         # One long-lived session for all training runs. Training goes through
         # run_streaming (not the blocking run()) so each multi-hour run prints
         # progress live -- otherwise the log looks frozen for hours and the run
@@ -286,19 +300,23 @@ def main() -> None:
         train_session = "week4-training"
         sandbox.process.create_session(train_session)
 
-        for model, run_name, epochs in EXPERIMENTS:
+        for model in models:
+            budgets = budget_map[model]
+            # One "epochs:run_name" token per budget, comma-joined (no spaces, so
+            # it's a single shell arg). recbole_run trains once to the largest
+            # budget and logs a result for each budget from that trajectory.
+            budgets_arg = ",".join(f"{epochs}:{name}" for epochs, name in budgets)
             run_streaming(
                 sandbox,
                 train_session,
-                f"{uv} run python -m src.recbole_run --model {model} "
-                f"--epochs {epochs} --run-name {run_name}",
+                f"{uv} run python -m src.recbole_run --model {model} --budgets {budgets_arg}",
                 cwd=REPO_DIR,
             )
-            # Download after every experiment, not just at the end -- a GPU
-            # sandbox is deleted the instant it stops (see docstring), so a
-            # crash on run 5 of 6 must not cost us runs 1-4's results too.
+            # Download after every model, not just at the end -- a GPU sandbox is
+            # deleted the instant it stops (see docstring), so a crash on the 2nd
+            # model must not cost us the 1st model's results too.
             sandbox.fs.download_file(f"{REPO_DIR}/mlflow.db", local_db_path)
-            print(f"  -> synced mlflow.db to {local_db_path} after {run_name}")
+            print(f"  -> synced mlflow.db to {local_db_path} after {model}")
 
         print(f"\nFinal mlflow.db synced to {local_db_path}")
         print("Bring this file back to your main Claude Code session to merge the")
@@ -309,10 +327,33 @@ def main() -> None:
         print(f"Sandbox ID: {sandbox.id}")
         print("This sandbox is STILL RUNNING and billing per second.")
         print("Stopping it deletes it immediately (GPU sandboxes are forced-ephemeral) --")
-        print("only run this once you've confirmed mlflow_daytona_week4.db looks right:")
+        print(f"only run this once you've confirmed {local_db_path} looks right:")
         print(f"  daytona stop {sandbox.id}")
         print("=" * 70)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Run the Week 4 RecBole training-budget sweep on a Daytona GPU sandbox.")
+    parser.add_argument(
+        "--model",
+        choices=list(BUDGETS.keys()),
+        default=None,
+        help="Run only this model (its own sandbox + its own mlflow db file). Launch "
+        "the script twice, once per model, to run the two models in parallel across two "
+        "sandboxes (halves wall-clock; same credits). Default: both models, one sandbox.",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Use tiny budgets (~30 epochs) to validate the pipeline end-to-end cheaply "
+        "before committing to the multi-day real sweep.",
+    )
+    args = parser.parse_args()
+
+    budget_map = SMOKE_BUDGETS if args.smoke else BUDGETS
+    models = [args.model] if args.model else list(budget_map.keys())
+    # Distinct db filename per variant so parallel per-model runs (and smoke runs)
+    # don't clobber each other's downloaded results in the same working directory.
+    suffix = (f"_{args.model}" if args.model else "") + ("_smoke" if args.smoke else "")
+    db_path = f"mlflow_daytona_week4{suffix}.db"
+    main(models, budget_map, db_path)

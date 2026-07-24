@@ -41,11 +41,19 @@ valid_metric_bigger: true
 # Batch sizes raised from 128/256: on the GPU box, SASRec (a small model) left
 # the GPU at only ~20-25% utilization -- it finished each tiny batch and stalled
 # waiting for the next one from the dataloader. Bigger batches give the GPU more
-# work per step and cut the number of (serial, worker=0) dataloader iterations
-# per epoch, the actual bottleneck. Applied uniformly so the budget comparison
-# stays consistent across all six runs.
-train_batch_size: 1024
-eval_batch_size: 2048
+# work per step and cut the number of dataloader iterations per epoch, the actual
+# bottleneck. GPU memory has huge headroom (was using ~1.4GB of 24GB). Applied
+# uniformly so the budget comparison stays consistent.
+train_batch_size: 2048
+eval_batch_size: 4096
+
+# Parallel dataloading: with worker=0 a single process built every batch and
+# starved the GPU. worker>0 spawns DataLoader worker processes to prefetch and
+# collate batches in parallel. Kept modest (4) because RecBole does not set
+# persistent_workers, so workers are respawned each epoch -- too many would add
+# more spawn overhead than they save. Pair with a low per-process CPU-thread cap
+# (see daytona_week4.py) so 4 workers don't oversubscribe the 16 cores.
+worker: 4
 learning_rate: 0.001
 learner: adam
 # SASRec/BERT4Rec both default to loss_type: CE (full softmax over items,
@@ -55,7 +63,14 @@ train_neg_sample_args: ~
 # We control epoch budgets explicitly for the training-budget experiment, so
 # disable early stopping (stopping_step >= epochs in every config we'll run).
 stopping_step: 100000
-eval_step: 1
+
+# Evaluate every 10 epochs instead of every epoch. Validation is ~16s/epoch, so
+# on a 2000-epoch run eval-every-epoch would burn ~9h just evaluating. eval_step
+# MUST divide every budget in the sweep (200/800/2000 all divisible by 10) so the
+# single max-budget run lands a validation exactly on each budget milestone --
+# src/recbole_run.py freezes the best-valid checkpoint at those milestones to
+# recover the 1x/4x/10x results from one trajectory.
+eval_step: 10
 
 show_progress: false
 log_wandb: false
