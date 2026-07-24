@@ -17,21 +17,28 @@ BEAUTY_URL = "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/r
 MAX_RETRIES = 5
 RETRY_BACKOFF_SEC = 5
 
+# Some servers (files.grouplens.org observed doing this from a Daytona GPU
+# sandbox) reset the connection when they see Python urllib's default User-
+# Agent ("Python-urllib/3.x"), which reads as a bot/scraper. A browser-like
+# UA fixed it -- 5/5 retries had failed identically with the default UA,
+# which pointed at something structural rather than a transient network blip.
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+
 
 def _md5(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
 
 def _urlopen_with_retry(url: str):
-    """urllib.request.urlopen with retries -- cloud sandboxes (Daytona, etc.)
-    have occasionally reset large/slow connections outbound (observed:
-    ConnectionResetError on files.grouplens.org mid-handshake). Transient,
-    not a code bug, so just retry with backoff rather than failing the whole
-    multi-hour run over a single network blip."""
+    """urllib.request.urlopen (with a browser User-Agent) and retries."""
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            return urllib.request.urlopen(url)
+            return urllib.request.urlopen(request)
         except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
             last_error = e
             print(f"  download attempt {attempt}/{MAX_RETRIES} failed: {e}")
