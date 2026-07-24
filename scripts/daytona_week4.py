@@ -108,13 +108,17 @@ SANDBOX_CPUS = 16
 # (model, run_name, epochs) for the 1x/4x/10x training-budget sweep.
 # 200 epochs matches our own SASRec headline run (configs/sasrec_ml1m.yaml);
 # adjust here if you want different budgets before running.
+# Validation pass: run only the 1x budgets first to confirm the pipeline and
+# sanity-check the numbers, and to measure the real per-epoch time after the
+# batch-size speedup before committing to the multi-day full sweep. Restore the
+# 4x/10x rows below once 1x looks right.
 EXPERIMENTS = [
     ("SASRec", "sasrec_recbole_1x", 200),
-    ("SASRec", "sasrec_recbole_4x", 800),
-    ("SASRec", "sasrec_recbole_10x", 2000),
     ("BERT4Rec", "bert4rec_recbole_1x", 200),
-    ("BERT4Rec", "bert4rec_recbole_4x", 800),
-    ("BERT4Rec", "bert4rec_recbole_10x", 2000),
+    # ("SASRec", "sasrec_recbole_4x", 800),
+    # ("SASRec", "sasrec_recbole_10x", 2000),
+    # ("BERT4Rec", "bert4rec_recbole_4x", 800),
+    # ("BERT4Rec", "bert4rec_recbole_10x", 2000),
 ]
 
 

@@ -38,8 +38,14 @@ topk: [10]
 valid_metric: NDCG@10
 valid_metric_bigger: true
 
-train_batch_size: 128
-eval_batch_size: 256
+# Batch sizes raised from 128/256: on the GPU box, SASRec (a small model) left
+# the GPU at only ~20-25% utilization -- it finished each tiny batch and stalled
+# waiting for the next one from the dataloader. Bigger batches give the GPU more
+# work per step and cut the number of (serial, worker=0) dataloader iterations
+# per epoch, the actual bottleneck. Applied uniformly so the budget comparison
+# stays consistent across all six runs.
+train_batch_size: 1024
+eval_batch_size: 2048
 learning_rate: 0.001
 learner: adam
 # SASRec/BERT4Rec both default to loss_type: CE (full softmax over items,
