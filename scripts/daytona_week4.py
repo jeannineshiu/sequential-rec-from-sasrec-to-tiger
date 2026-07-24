@@ -9,7 +9,15 @@ rented GPU instead of continuing to fight the local MPS path.
 
 Usage:
     export DAYTONA_API_KEY=...        # app.daytona.io/dashboard/keys
+    uv run python -m src.data.download --dest data/raw --dataset ml-1m  # local copy first, see below
     uv run python scripts/daytona_week4.py
+
+Note: ML-1M is uploaded from a local copy rather than downloaded by the
+sandbox -- files.grouplens.org resets the connection from inside Daytona's
+sandboxes every time (confirmed 5/5 retries, with and without a browser
+User-Agent), most likely blocking the cloud provider's outbound IP range
+rather than anything fixable client-side. Run the download command above on
+this machine once before running this script.
 
 Safety notes -- READ BEFORE RUNNING (this spends real Daytona credits, billed
 per second while the sandbox is running):
@@ -49,6 +57,7 @@ per second while the sandbox is running):
 
 import os
 import sys
+from pathlib import Path
 
 from daytona import CreateSandboxFromImageParams, Daytona, DaytonaConfig, GpuType, Resources
 
@@ -127,11 +136,23 @@ def main() -> None:
         run(sandbox, f"git clone {REPO_URL} {REPO_DIR}")
         run(sandbox, "curl -LsSf https://astral.sh/uv/install.sh | sh")
         run(sandbox, f"{uv} sync", cwd=REPO_DIR)
-        run(
-            sandbox,
-            f"{uv} run python -m src.data.download --dest data/raw --dataset ml-1m",
-            cwd=REPO_DIR,
-        )
+
+        # files.grouplens.org resets the connection from inside this sandbox
+        # every time (5/5 retries, with and without a browser User-Agent) --
+        # looks like it's blocking the cloud provider's outbound IP range
+        # rather than anything fixable client-side. Upload the already-
+        # downloaded local copy instead of letting the sandbox fetch it.
+        local_ratings = Path("data/raw/ml-1m/ratings.dat")
+        if not local_ratings.exists():
+            raise FileNotFoundError(
+                f"{local_ratings} not found locally -- run "
+                "`uv run python -m src.data.download --dest data/raw --dataset ml-1m` "
+                "on this machine first, then re-run this script."
+            )
+        run(sandbox, f"mkdir -p {REPO_DIR}/data/raw/ml-1m")
+        print(f"\n(uploading {local_ratings} -> sandbox:{REPO_DIR}/data/raw/ml-1m/ratings.dat)")
+        sandbox.fs.upload_file(str(local_ratings), f"{REPO_DIR}/data/raw/ml-1m/ratings.dat")
+
         run(sandbox, f"{uv} run python -m src.recbole_utils.convert_to_atomic", cwd=REPO_DIR)
 
         local_db_path = "mlflow_daytona_week4.db"
