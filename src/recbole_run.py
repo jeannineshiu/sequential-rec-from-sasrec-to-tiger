@@ -5,9 +5,31 @@ everything into one table.
 """
 
 import argparse
+import os
 import time
 
-import numpy as np
+# Cap CPU thread pools to the cores actually available to this process before
+# any numeric library is imported. In a cgroup-limited container (e.g. a 4-CPU
+# Daytona sandbox) OpenMP/MKL/BLAS otherwise read the HOST's core count and
+# each spawn that many threads: a real run wedged with ~228 threads fighting
+# over 4 cores in a futex livelock -- all cores pegged at 100%, GPU idle, not a
+# single epoch completed. os.cpu_count() reports the host count and would not
+# help; sched_getaffinity reports the cgroup/affinity-limited count. Must run
+# before `import numpy`/`import torch` for the C libraries to honor it.
+try:
+    _AVAIL_CPUS = len(os.sched_getaffinity(0))
+except AttributeError:  # non-Linux (e.g. local macOS) has no sched_getaffinity
+    _AVAIL_CPUS = os.cpu_count() or 1
+for _thread_var in (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(_thread_var, str(_AVAIL_CPUS))
+
+import numpy as np  # noqa: E402
 
 # RecBole 1.2.1's Config.compatibility_settings() reads numpy's deprecated
 # underscore-suffixed aliases (np.float_, np.complex_, np.object_, np.str_,
@@ -27,9 +49,13 @@ for _name, _replacement in _NUMPY2_SHIMS.items():
 import torch  # noqa: E402
 from recbole.config import Config  # noqa: E402
 from recbole.data import create_dataset, data_preparation  # noqa: E402
-from recbole.utils import get_model, get_trainer, init_seed  # noqa: E402
+from recbole.utils import get_model, get_trainer, init_logger, init_seed  # noqa: E402
 
 from src.utils import log_run  # noqa: E402
+
+# Belt-and-suspenders alongside the env vars above: cap torch's own intra-op
+# thread pool too (torch reads this at runtime, not just from the env).
+torch.set_num_threads(_AVAIL_CPUS)
 
 
 def pick_device() -> torch.device:
@@ -56,7 +82,13 @@ def run(
 
     device = pick_device()
     config["device"] = device
-    print(f"model={model_name} epochs={epochs} device={device}")
+
+    # Set up RecBole's logger so per-epoch training/validation lines are
+    # actually emitted. Without this the low-level API path leaves the logger
+    # handler-less, INFO logs get dropped, and a working run prints NOTHING for
+    # its whole duration -- indistinguishable from a hang when watching a log.
+    init_logger(config)
+    print(f"model={model_name} epochs={epochs} device={device} threads={_AVAIL_CPUS}", flush=True)
 
     init_seed(config["seed"], config["reproducibility"])
 

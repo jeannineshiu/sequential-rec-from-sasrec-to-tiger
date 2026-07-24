@@ -137,8 +137,18 @@ def run_streaming(sandbox, session_id: str, command: str, cwd: str | None = None
     Setup uses the blocking run() above; training uses this because RecBole
     prints progress for the whole duration and we need to see it (and be able
     to tell training-in-progress apart from a real stall). Session commands
-    have no cwd parameter, so cwd is applied with an explicit `cd`."""
-    full_cmd = f"cd {cwd} && {command}" if cwd else command
+    have no cwd parameter, so cwd is applied with an explicit `cd`.
+
+    PYTHONUNBUFFERED=1: the remote process's stdout is a pipe, not a tty, so
+    Python block-buffers it inside the sandbox -- RecBole's per-epoch logger
+    output (which goes to stdout) then sits in that remote buffer and never
+    reaches get_session_command_logs until a full block fills or the process
+    exits, making a live run look frozen after only its stderr warnings show.
+    This is the same buffering trap as the module-level stdout reconfigure,
+    one level down on the sandbox side; forcing unbuffered stdout there makes
+    epoch progress stream out line by line."""
+    env_command = f"PYTHONUNBUFFERED=1 {command}"
+    full_cmd = f"cd {cwd} && {env_command}" if cwd else env_command
     print(f"\n$ {full_cmd}")
     resp = sandbox.process.execute_session_command(
         session_id, SessionExecuteRequest(command=full_cmd, run_async=True)
