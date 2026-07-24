@@ -116,23 +116,30 @@ def main() -> None:
     )
     print(f"Sandbox created: id={sandbox.id}")
 
+    # Explicit path to the installed uv binary rather than bare "uv": each
+    # sandbox.process.exec() call may be a fresh non-login shell that never
+    # sources the rc file the uv installer appends its PATH entry to.
+    uv = "$HOME/.local/bin/uv"
+
     try:
+        # The pytorch/pytorch:*-runtime image is minimal and lacks git/curl.
+        run(sandbox, "apt-get update && apt-get install -y git curl")
         run(sandbox, f"git clone {REPO_URL} {REPO_DIR}")
         run(sandbox, "curl -LsSf https://astral.sh/uv/install.sh | sh")
-        run(sandbox, "uv sync", cwd=REPO_DIR)
+        run(sandbox, f"{uv} sync", cwd=REPO_DIR)
         run(
             sandbox,
-            "uv run python -m src.data.download --dest data/raw --dataset ml-1m",
+            f"{uv} run python -m src.data.download --dest data/raw --dataset ml-1m",
             cwd=REPO_DIR,
         )
-        run(sandbox, "uv run python -m src.recbole_utils.convert_to_atomic", cwd=REPO_DIR)
+        run(sandbox, f"{uv} run python -m src.recbole_utils.convert_to_atomic", cwd=REPO_DIR)
 
         local_db_path = "mlflow_daytona_week4.db"
 
         for model, run_name, epochs in EXPERIMENTS:
             run(
                 sandbox,
-                f"uv run python -m src.recbole_run --model {model} "
+                f"{uv} run python -m src.recbole_run --model {model} "
                 f"--epochs {epochs} --run-name {run_name}",
                 cwd=REPO_DIR,
             )
