@@ -57,9 +57,31 @@ per second while the sandbox is running):
 
 import os
 import sys
+import time
 from pathlib import Path
 
-from daytona import CreateSandboxFromImageParams, Daytona, DaytonaConfig, GpuType, Resources
+from daytona import (
+    CreateSandboxFromImageParams,
+    Daytona,
+    DaytonaConfig,
+    GpuType,
+    Resources,
+    SessionExecuteRequest,
+)
+
+# Line-buffer stdout/stderr so progress prints appear in a redirected log
+# (`uv run python scripts/daytona_week4.py > week4_run.log`) as they happen,
+# instead of sitting in Python's default block buffer until the process exits.
+# This is not cosmetic: that block-buffering once made a normally-progressing
+# run look frozen at the end of apt-get's output -- every later step's "$ cmd"
+# marker was buffered and invisible -- which led to a live GPU training job
+# being killed under the false belief that setup had hung. There was no hang;
+# the log just wasn't being flushed.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(line_buffering=True)
+    except AttributeError:  # not a TextIOWrapper (unlikely); nothing to do
+        pass
 
 REPO_URL = "https://github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger.git"
 # Absolute path on purpose: process.exec's default cwd is /workspace (the
@@ -87,15 +109,59 @@ SETUP_TIMEOUT_SEC = 300  # setup steps should finish in minutes, not hours
 
 
 def run(sandbox, command: str, cwd: str | None = None, timeout: float = SETUP_TIMEOUT_SEC) -> None:
-    """timeout=0 means unlimited -- only pass that for the actual multi-hour
-    training calls. Setup steps (apt-get/git/uv sync) get a bounded timeout
-    so a mystery hang (seen 3x in a row after apt-get's output, cause
-    unconfirmed) raises an exception instead of blocking forever."""
+    """Run a short setup command and block until it finishes.
+
+    sandbox.process.exec() is blocking and returns the command's whole output
+    only on completion, so nothing prints between the "$ cmd" marker and the
+    command finishing. That's fine for setup steps (seconds to a couple of
+    minutes). It is NOT fine for the multi-hour training runs -- those go
+    through run_streaming() instead so their output shows up live. The bounded
+    timeout guards against a setup step genuinely stalling; earlier runs that
+    looked like they "hung after apt-get" were a stdout-buffering artifact
+    (see the module-level reconfigure), not a real hang."""
     print(f"\n$ {command}")
     result = sandbox.process.exec(command, cwd=cwd, timeout=timeout)
     print(result.result)
     if result.exit_code != 0:
         raise RuntimeError(f"command failed (exit {result.exit_code}): {command}")
+
+
+TRAIN_POLL_SEC = 15  # how often to poll a running training command for new output
+
+
+def run_streaming(sandbox, session_id: str, command: str, cwd: str | None = None) -> None:
+    """Run a long-running command asynchronously in a session and stream its
+    output live by polling, so a multi-hour training run shows per-epoch
+    progress instead of looking hung until it finishes.
+
+    Setup uses the blocking run() above; training uses this because RecBole
+    prints progress for the whole duration and we need to see it (and be able
+    to tell training-in-progress apart from a real stall). Session commands
+    have no cwd parameter, so cwd is applied with an explicit `cd`."""
+    full_cmd = f"cd {cwd} && {command}" if cwd else command
+    print(f"\n$ {full_cmd}")
+    resp = sandbox.process.execute_session_command(
+        session_id, SessionExecuteRequest(command=full_cmd, run_async=True)
+    )
+    cmd_id = resp.cmd_id
+
+    # get_session_command_logs returns the cumulative output each call; track
+    # how much we've already printed and emit only the new tail.
+    printed = 0
+    while True:
+        logs = sandbox.process.get_session_command_logs(session_id, cmd_id)
+        output = logs.output or ""
+        if len(output) > printed:
+            sys.stdout.write(output[printed:])
+            sys.stdout.flush()
+            printed = len(output)
+
+        cmd = sandbox.process.get_session_command(session_id, cmd_id)
+        if cmd.exit_code is not None:
+            if cmd.exit_code != 0:
+                raise RuntimeError(f"command failed (exit {cmd.exit_code}): {command}")
+            return
+        time.sleep(TRAIN_POLL_SEC)
 
 
 def main() -> None:
@@ -153,14 +219,11 @@ def main() -> None:
     uv = "$HOME/.local/bin/uv"
 
     try:
-        # -qq / --quiet everywhere below: three separate attempts all hung
-        # indefinitely (0% CPU, connection to Daytona's backend established
-        # but no further progress) right after apt-get's very verbose output,
-        # never reaching git clone's own output. Best guess: something about
-        # a command producing a huge amount of output, or git clone's default
-        # \r-overwriting progress meter, confuses whatever mechanism the SDK
-        # uses to detect a command has finished streaming. Quiet flags avoid
-        # both large output volume and \r-based progress entirely.
+        # -qq / --quiet everywhere below just keeps the log small. (An earlier
+        # theory blamed large/\r-heavy output for "hanging" the run right after
+        # apt-get; that turned out to be stdout block-buffering hiding the
+        # progress, not a real hang -- see the module-level reconfigure. The
+        # quiet flags are harmless to keep and do cut log noise.)
         run(sandbox, "apt-get update -qq && apt-get install -qq -y git curl")
         run(sandbox, f"git clone --quiet {REPO_URL} {REPO_DIR}")
         run(sandbox, "curl -LsSf https://astral.sh/uv/install.sh | sh")
@@ -180,13 +243,20 @@ def main() -> None:
 
         local_db_path = "mlflow_daytona_week4.db"
 
+        # One long-lived session for all training runs. Training goes through
+        # run_streaming (not the blocking run()) so each multi-hour run prints
+        # progress live -- otherwise the log looks frozen for hours and the run
+        # is indistinguishable from a real stall.
+        train_session = "week4-training"
+        sandbox.process.create_session(train_session)
+
         for model, run_name, epochs in EXPERIMENTS:
-            run(
+            run_streaming(
                 sandbox,
+                train_session,
                 f"{uv} run python -m src.recbole_run --model {model} "
                 f"--epochs {epochs} --run-name {run_name}",
                 cwd=REPO_DIR,
-                timeout=0,  # unlimited -- this is the actual multi-hour training call
             )
             # Download after every experiment, not just at the end -- a GPU
             # sandbox is deleted the instant it stops (see docstring), so a
