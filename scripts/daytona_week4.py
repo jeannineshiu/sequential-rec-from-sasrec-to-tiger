@@ -267,7 +267,10 @@ def provision_sandbox(daytona, local_ratings: Path):
     run(sandbox, "apt-get update -qq && apt-get install -qq -y git curl")
     run(sandbox, f"git clone --quiet {REPO_URL} {REPO_DIR}")
     run(sandbox, "curl -LsSf https://astral.sh/uv/install.sh | sh")
-    run(sandbox, f"{UV} sync -q", cwd=REPO_DIR)
+    # --extra daytona installs the daytona SDK (an optional-dependency extra, not a
+    # default dep) so the detached runner can self-stop this sandbox at the end.
+    # Without it the self-stop step dies with ModuleNotFoundError: No module 'daytona'.
+    run(sandbox, f"{UV} sync -q --extra daytona", cwd=REPO_DIR)
 
     run(sandbox, f"mkdir -p {REPO_DIR}/data/raw/ml-1m")
     print(f"\n(uploading {local_ratings} -> sandbox:{REPO_DIR}/data/raw/ml-1m/ratings.dat)")
