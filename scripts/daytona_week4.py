@@ -98,7 +98,12 @@ REPO_DIR = "/workspace/sequential-rec-from-sasrec-to-tiger"
 # the sandbox neither os.cpu_count() nor os.sched_getaffinity() sees the limit
 # (Daytona's cpu=N is a CFS quota, not an affinity mask -- both report the ~96
 # host cores), so letting the process auto-detect oversubscribes and livelocks.
-SANDBOX_CPUS = 4
+#
+# 16 is this account's per-GPU vCPU ceiling. The bottleneck is CPU-side: RecBole
+# rebuilds the MAX_ITEM_LIST_LENGTH=200 sequence augmentation each run and feeds
+# the GPU from a single dataloader, so epoch time is CPU-bound (275s/epoch at 4
+# cores). More cores speeds up the augmentation and the OMP/MKL/numpy paths.
+SANDBOX_CPUS = 16
 
 # (model, run_name, epochs) for the 1x/4x/10x training-budget sweep.
 # 200 epochs matches our own SASRec headline run (configs/sasrec_ml1m.yaml);
@@ -214,7 +219,9 @@ def main() -> None:
             image="pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime",
             resources=Resources(
                 cpu=SANDBOX_CPUS,
-                memory=16,
+                memory=32,  # GB -- generous headroom (per-GPU cap is 192GB); the
+                # maxlen-200 augmented sequences pushed RSS to ~8GB at 4 cores,
+                # so give room for more parallelism without risking OOM.
                 disk=30,  # GB -- explicit and modest: ML-1M + code + docker
                 # layers don't need much. Not specifying disk risks a large
                 # default that can push you over an org-wide storage cap
