@@ -92,6 +92,14 @@ REPO_URL = "https://github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger.
 # removes the ambiguity for both APIs.
 REPO_DIR = "/workspace/sequential-rec-from-sasrec-to-tiger"
 
+# CPU cores requested for the sandbox. Used both for the Resources request AND
+# exported to the training process as RECBOLE_NUM_THREADS so it caps its CPU
+# thread pools to this exact number. This has to be passed explicitly: inside
+# the sandbox neither os.cpu_count() nor os.sched_getaffinity() sees the limit
+# (Daytona's cpu=N is a CFS quota, not an affinity mask -- both report the ~96
+# host cores), so letting the process auto-detect oversubscribes and livelocks.
+SANDBOX_CPUS = 4
+
 # (model, run_name, epochs) for the 1x/4x/10x training-budget sweep.
 # 200 epochs matches our own SASRec headline run (configs/sasrec_ml1m.yaml);
 # adjust here if you want different budgets before running.
@@ -147,7 +155,14 @@ def run_streaming(sandbox, session_id: str, command: str, cwd: str | None = None
     This is the same buffering trap as the module-level stdout reconfigure,
     one level down on the sandbox side; forcing unbuffered stdout there makes
     epoch progress stream out line by line."""
-    env_command = f"PYTHONUNBUFFERED=1 {command}"
+    # RECBOLE_NUM_THREADS: authoritative CPU-core count for the training process
+    # to cap its thread pools to (the sandbox can't detect the quota itself --
+    # see SANDBOX_CPUS). OMP_NUM_THREADS is set too as a belt-and-suspenders in
+    # case anything imports a numeric lib before recbole_run.py reads the env.
+    env_command = (
+        f"RECBOLE_NUM_THREADS={SANDBOX_CPUS} OMP_NUM_THREADS={SANDBOX_CPUS} "
+        f"PYTHONUNBUFFERED=1 {command}"
+    )
     full_cmd = f"cd {cwd} && {env_command}" if cwd else env_command
     print(f"\n$ {full_cmd}")
     resp = sandbox.process.execute_session_command(
@@ -198,7 +213,7 @@ def main() -> None:
         CreateSandboxFromImageParams(
             image="pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime",
             resources=Resources(
-                cpu=4,
+                cpu=SANDBOX_CPUS,
                 memory=16,
                 disk=30,  # GB -- explicit and modest: ML-1M + code + docker
                 # layers don't need much. Not specifying disk risks a large

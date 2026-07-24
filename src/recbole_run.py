@@ -12,14 +12,43 @@ import time
 # any numeric library is imported. In a cgroup-limited container (e.g. a 4-CPU
 # Daytona sandbox) OpenMP/MKL/BLAS otherwise read the HOST's core count and
 # each spawn that many threads: a real run wedged with ~228 threads fighting
-# over 4 cores in a futex livelock -- all cores pegged at 100%, GPU idle, not a
-# single epoch completed. os.cpu_count() reports the host count and would not
-# help; sched_getaffinity reports the cgroup/affinity-limited count. Must run
-# before `import numpy`/`import torch` for the C libraries to honor it.
-try:
-    _AVAIL_CPUS = len(os.sched_getaffinity(0))
-except AttributeError:  # non-Linux (e.g. local macOS) has no sched_getaffinity
-    _AVAIL_CPUS = os.cpu_count() or 1
+# over its cores in a futex livelock -- all cores pegged at 100%, GPU idle, not
+# a single epoch completed. Getting the right number matters and is subtle:
+#   - os.cpu_count() and os.sched_getaffinity() both report the HOST count on a
+#     Daytona GPU sandbox (its cpu=N is a CFS *quota*, not an affinity mask), so
+#     neither reflects the real limit -- an earlier fix using sched_getaffinity
+#     read 96 and set 96 threads, reproducing the very oversubscription it was
+#     meant to stop.
+# So: honor an explicit override from the launcher first (daytona_week4.py knows
+# the quota it requested and exports it), then read the cgroup CFS quota, then
+# fall back to affinity/cpu_count for a normal local machine.
+def _effective_cpu_limit() -> int:
+    override = os.environ.get("RECBOLE_NUM_THREADS") or os.environ.get("OMP_NUM_THREADS")
+    if override and override.isdigit() and int(override) > 0:
+        return int(override)
+    try:  # cgroup v2
+        with open("/sys/fs/cgroup/cpu.max") as fh:
+            quota, period = fh.read().split()
+        if quota != "max":
+            return max(1, round(int(quota) / int(period)))
+    except (OSError, ValueError):
+        pass
+    try:  # cgroup v1
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as fh:
+            quota = int(fh.read())
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as fh:
+            period = int(fh.read())
+        if quota > 0 and period > 0:
+            return max(1, quota // period)
+    except (OSError, ValueError):
+        pass
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:  # non-Linux (e.g. local macOS)
+        return os.cpu_count() or 1
+
+
+_AVAIL_CPUS = _effective_cpu_limit()
 for _thread_var in (
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
@@ -27,7 +56,7 @@ for _thread_var in (
     "NUMEXPR_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS",
 ):
-    os.environ.setdefault(_thread_var, str(_AVAIL_CPUS))
+    os.environ[_thread_var] = str(_AVAIL_CPUS)
 
 import numpy as np  # noqa: E402
 
