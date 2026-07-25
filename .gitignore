@@ -43,3 +43,6 @@ notes/
 .vscode/
 .idea/
 .obsidian/
+
+# Week 4 Daytona launch/run logs (throwaway)
+week4*.log
