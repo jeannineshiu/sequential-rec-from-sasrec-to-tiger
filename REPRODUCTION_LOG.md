@@ -220,3 +220,102 @@ section.
   datasets needs catalog-size normalization, comparing *within* a dataset is fine.
 
 ---
+
+## Week 4 — BERT4Rec via RecBole, and a GPU-infrastructure detour
+
+**2026-07-24 → 2026-07-25**
+
+Analysis of what the resulting numbers do and don't support lives in
+[`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md). This section is the trail of
+how they were produced — which, honestly, was mostly not about recommendation.
+
+### Protocol matching (the only part that determines whether the comparison means anything)
+
+- `configs/recbole/ml1m_base.yaml` mirrors this repo's own protocol field by field: 5-core
+  on both users and items, `LS: valid_and_test` leave-one-out grouped by user ordered by
+  timestamp, `MAX_ITEM_LIST_LENGTH: 200`, `mode: uni100` (1 positive + 100 uniform
+  negatives), Hit/NDCG@10 with NDCG@10 as the valid metric.
+- **Gap I did not close:** `uni100` makes RecBole draw its *own* negatives instead of
+  consuming the frozen `negatives.json` this repo shares across every other model. The
+  EXECUTION_PLAN fallback (export RecBole's raw scores, rescore through this repo's
+  evaluator) was never implemented. Same protocol shape, different draw — recorded rather
+  than hidden, because 1.6pp is what separates the two models.
+- Both RecBole models run `loss_type: CE` with `train_neg_sample_args: ~` (full softmax over
+  the catalog), while this repo's SASRec trains with BCE against one sampled negative. So the
+  eventual comparison varies architecture, framework, and loss simultaneously.
+
+### Cloud GPU detour (Daytona) — where the week actually went
+
+ML-1M + maxlen 200 + RecBole was too slow on the Mac, so the sweep moved to a Daytona GPU
+sandbox. Roughly a day and a half went into making that work. The failures were worth
+recording because none of them were model bugs:
+
+- **Thread oversubscription livelock, twice.** RecBole training wedged at epoch 1: GPU at
+  0–1%, all allotted cores pegged, ~228 threads, main thread in `futex_wait`. Inside a
+  cgroup-limited container OpenMP/MKL/BLAS read the *host* core count and each spawn that
+  many threads. First fix capped threads to `os.sched_getaffinity(0)` — which **reproduced
+  the bug**, because Daytona's `cpu=N` is a CFS quota, not an affinity mask, so affinity
+  still reported ~96 host cores and the "cap" set 96 threads. Real fix
+  (`_effective_cpu_limit()` in `src/recbole_run.py`): honor an explicit launcher override
+  first, then read the cgroup CFS quota, then fall back to affinity. Lesson: in a container,
+  "how many CPUs do I have" has at least three different wrong answers.
+- **A "hang" that wasn't.** A run was killed three times for hanging after `apt-get`. It was
+  stdout block-buffering: setup had completed and training was progressing invisibly.
+  Fixed with line-buffered stdout, `PYTHONUNBUFFERED=1`, and `init_logger(config)` — RecBole's
+  low-level API path leaves the logger handler-less, so a perfectly healthy run prints
+  *nothing* for its entire duration. Diagnosis cost more than the bug: I killed working runs
+  because I couldn't see them working.
+- **Path base mismatch.** `process.exec` resolves relative paths against `/workspace`, the
+  FileSystem API against `/root`. The uploaded `ratings.dat` would have landed somewhere the
+  converter never looked — caught on review before it triggered.
+- **`torch.load` `weights_only`.** PyTorch 2.6 flipped the default to `True`, which can't
+  unpickle RecBole checkpoints (they carry full config/optimizer state). Latent the whole
+  time; only surfaced at the smoke test because every earlier run was killed mid-training and
+  never reached post-training evaluation.
+- **Detached mode.** Final design runs training *inside* the sandbox under `nohup`, pushes
+  its results db to GitHub, and self-deletes — so nothing depends on the laptop staying awake
+  and no idle GPU billing accrues.
+
+### Speedups: two worked, one was a no-op
+
+Measured rather than assumed, which is the only reason I know one of them was wasted effort:
+
+| Change | Verdict |
+|---|---|
+| One trajectory per model, freezing best-valid checkpoints at each budget milestone via `fit`'s `callback_fn` | ✅ 6000 → 4000 epochs across the planned sweep |
+| `eval_step` 1 → 10 (validation is ~16s) | ✅ ~90% of evaluation time removed |
+| `train_batch_size` 128 → 2048 + `worker=4` | ❌ **no measurable effect** — throughput saturated by 1024; workers neutral |
+| `--model` per sandbox for cross-model parallelism | ✅ halves wall-clock at identical credit cost |
+
+The batch/worker change came from a real observation (GPU at 20–25% utilization, dataloader-
+starved) and still did nothing. Keeping the negative result visible: the profiling was right
+about the bottleneck and the fix still didn't move the number.
+
+### Result, and the scope cut
+
+- **BERT4Rec (RecBole, 200 epochs, CUDA):** test sampled HR@10 **0.8031**, NDCG@10 **0.6036**;
+  valid HR@10 0.8291, NDCG@10 0.6304. 104.1 s/epoch, 20823 s total (~5.8 GPU-hours). MLflow
+  run `bert4rec_recbole_1x`.
+- **Against this repo's SASRec** (0.8190 / 0.5948, ~7.0 s/epoch on MPS, ~25 min): a tie.
+  SASRec +1.6pp HR@10, BERT4Rec +0.9pp NDCG@10. Under a matched protocol and a matched epoch
+  budget, BERT4Rec's decisive win over SASRec does not reproduce.
+- **Only the 1x budget was run.** The sweep infrastructure supports 1x/4x/10x from a single
+  trajectory and `BUDGETS` in `scripts/daytona_week4.py` still lists all three, but at
+  104 s/epoch the full 2000-epoch run is ~58 GPU-hours *per model*. Cut to the 1x point on
+  cost. There is therefore no `training_budget.png` and no budget curve — the scaling claim
+  at the centre of the controversy is untested here, not answered.
+- **The RecBole-SASRec cross-validation was never launched.** The only SASRec sandbox run was
+  a 20-epoch detached smoke test, whose results db came back with 0 MLflow runs and was
+  discarded as a throwaway (`75d5ca5`). So M4's `<2%` cross-check has no data, and the
+  framework/loss confound in the comparison above is uncontrolled.
+- **No full-ranking metrics for BERT4Rec** — RecBole eval was uni100-only, so those cells are
+  blank in `results/tables/master.md`.
+
+**M4 not met.** Two of three Week 4 acceptance criteria (signature training-budget figure,
+RecBole SASRec within 2%) are outstanding; the third (controversy analysis document) is done.
+Cheapest path to closing the gap, in cost order: RecBole SASRec at 200 epochs (~1 GPU-hour,
+buys both the cross-check and the same-framework comparison) → rescore RecBole predictions
+through this repo's evaluator (CPU-only; removes the negative-draw caveat and yields the
+missing full-ranking numbers) → one 4x point per model (~23 GPU-hours) for an actual curve.
+
+---
