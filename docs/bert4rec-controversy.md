@@ -169,9 +169,13 @@ complaint, arrived at independently.
 
 In cost order, cheapest first:
 
-1. **RecBole SASRec at 200 epochs** (~1 GPU-hour at SASRec's much lower per-epoch cost).
-   Closes the framework confound, gives the same-framework architecture comparison, and
-   supplies the M4 cross-validation number. Highest value per GPU-hour by a wide margin.
+1. **RecBole SASRec at 200 epochs** (~5 GPU-hours, ~$12 on an RTX 4090 sandbox). SASRec is
+   the far smaller model, but that buys less than it looks like: the measured bottleneck is
+   CPU-side — RecBole rebuilds the maxlen-200 sequence augmentation and feeds the GPU from
+   one dataloader — and that cost is essentially model-independent, so this lands in the same
+   order as BERT4Rec's 5.8 h rather than an order below it. Still the best value in this
+   list: it closes the framework confound, gives the same-framework architecture comparison,
+   and supplies the M4 cross-validation number in one run.
 2. **Rescore RecBole predictions through this repo's evaluator** using the frozen
    `negatives.json`. Pure CPU work; removes the negative-set caveat entirely and would also
    yield the missing full-ranking numbers.

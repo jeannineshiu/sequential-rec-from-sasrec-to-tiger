@@ -414,9 +414,30 @@ if __name__ == "__main__":
         "the runner detached inside it (training survives this laptop sleeping/closing), and "
         "exit. Each sandbox pushes results to GitHub and self-stops. Needs GITHUB_TOKEN set.",
     )
+    parser.add_argument(
+        "--budgets",
+        type=str,
+        default=None,
+        help='Override the built-in budget list for the selected model(s), as '
+        '"epochs:run_name" pairs, e.g. "200:sasrec_recbole_1x". GPU time scales directly '
+        "with the largest budget, so this is the knob for running a single cheap point "
+        "instead of the full 1x/4x/10x trajectory. Every budget must be divisible by "
+        "eval_step (10) or its milestone checkpoint is never captured.",
+    )
     args = parser.parse_args()
 
     budget_map = SMOKE_BUDGETS if args.smoke else BUDGETS
+    if args.budgets:
+        if args.smoke:
+            parser.error("--budgets and --smoke both set budgets; pass only one")
+        override = []
+        for pair in args.budgets.split(","):
+            epochs_str, _, name = pair.partition(":")
+            if not name:
+                parser.error(f"--budgets entry {pair!r} must be 'epochs:run_name'")
+            override.append((int(epochs_str), name))
+        # Same list for every selected model: run_names carry the model identity.
+        budget_map = {model: override for model in BUDGETS}
     models = [args.model] if args.model else list(budget_map.keys())
 
     if args.detached:

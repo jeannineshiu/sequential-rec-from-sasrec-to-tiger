@@ -313,8 +313,10 @@ about the bottleneck and the fix still didn't move the number.
 
 **M4 not met.** Two of three Week 4 acceptance criteria (signature training-budget figure,
 RecBole SASRec within 2%) are outstanding; the third (controversy analysis document) is done.
-Cheapest path to closing the gap, in cost order: RecBole SASRec at 200 epochs (~1 GPU-hour,
-buys both the cross-check and the same-framework comparison) → rescore RecBole predictions
+Cheapest path to closing the gap, in cost order: RecBole SASRec at 200 epochs (~5 GPU-hours
+/ ~$12 — SASRec is the smaller model but the bottleneck is model-independent CPU-side
+sequence augmentation, so it does not come in far under BERT4Rec's 5.8 h; buys both the
+cross-check and the same-framework comparison) → rescore RecBole predictions
 through this repo's evaluator (CPU-only; removes the negative-draw caveat and yields the
 missing full-ranking numbers) → one 4x point per model (~23 GPU-hours) for an actual curve.
 
