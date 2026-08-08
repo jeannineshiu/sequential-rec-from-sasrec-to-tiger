@@ -56,9 +56,12 @@ per second while the sandbox is running):
 """
 
 import argparse
+import json
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from daytona import (
@@ -234,6 +237,48 @@ def _require_local_data() -> Path:
     return local_ratings
 
 
+def _require_working_github_token(token: str) -> None:
+    """Fail before provisioning if the PAT can't actually push to the repo.
+
+    Presence is not validity. On 2026-08-08 a --detached SASRec run trained all 200
+    epochs (~4.7 GPU-hours, ~$12) with an expired PAT: the launcher checked only
+    that GITHUB_TOKEN was non-empty, the sandbox's push failed at the very end, and
+    the results were lost. This costs one API call and turns that into an instant,
+    free error -- the same "fail before paying for a GPU" rule as _require_local_data.
+    """
+    owner_repo = REPO_URL.removeprefix("https://github.com/").removesuffix(".git")
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{owner_repo}",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            repo = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        detail = "token is expired, revoked, or malformed" if exc.code == 401 else f"HTTP {exc.code}"
+        print(
+            f"GITHUB_TOKEN cannot read {owner_repo} ({detail}).\n"
+            "The sandbox pushes results back over this token -- without it a multi-hour "
+            "run has nowhere to put its results. Issue a new PAT with contents:write "
+            "and re-export GITHUB_TOKEN.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except urllib.error.URLError as exc:
+        print(f"Could not reach the GitHub API to validate GITHUB_TOKEN: {exc.reason}", file=sys.stderr)
+        sys.exit(1)
+
+    # Read access alone isn't enough: the sandbox has to push.
+    if not repo.get("permissions", {}).get("push"):
+        print(
+            f"GITHUB_TOKEN can read {owner_repo} but has no push permission. "
+            "Re-issue it with contents:write.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"GITHUB_TOKEN validated (push access to {owner_repo}).")
+
+
 def provision_sandbox(daytona, local_ratings: Path):
     """Create a GPU sandbox and get it ready to train: install git/curl/uv, clone
     the repo, uv sync, and upload the ML-1M data. Returns the sandbox. Shared by
@@ -342,6 +387,9 @@ def main_detached(models: list[str], budget_map: dict) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    # Both pre-flight checks run before daytona.create(): a GPU sandbox starts
+    # billing the moment it exists, so everything knowable for free is checked first.
+    _require_working_github_token(github_token)
     local_ratings = _require_local_data()
     daytona = Daytona(DaytonaConfig(api_key=api_key))
 

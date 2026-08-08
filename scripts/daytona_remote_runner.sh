@@ -30,6 +30,10 @@ LOCAL_DB="mlflow_daytona_week4_${MODEL}.db"
 
 echo "=== Week 4 autonomous runner: model=${MODEL} budgets=${BUDGETS} ==="
 
+# Tracks whether the results db is safely off this sandbox. self_stop refuses to
+# delete the sandbox unless this is 1 -- see the comment on self_stop.
+PUSH_OK=0
+
 # Authenticate git push if a token was injected (results safety net).
 if [ -n "${GITHUB_TOKEN:-}" ]; then
   git remote set-url origin "https://${GITHUB_TOKEN}@github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger.git"
@@ -37,6 +41,24 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
   git config user.name "week4-daytona-runner"
 else
   echo "WARNING: GITHUB_TOKEN not set -- results will stay only in this sandbox."
+fi
+
+# Prove we can actually reach the remote with these credentials BEFORE spending
+# hours of GPU time. A 2026-08-08 SASRec run trained all 200 epochs (~4.7 GPU-h,
+# ~$12) and only then discovered the injected PAT had expired: the push failed and
+# the results were destroyed by the unconditional self-stop below. A dead token is
+# knowable in one second at startup, so fail here instead -- nothing is lost yet.
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  echo "=== pre-flight: verifying push credentials ==="
+  if git ls-remote origin >/dev/null 2>&1; then
+    echo "  -> remote reachable with the injected token"
+  else
+    echo "FATAL: cannot reach origin with the injected GITHUB_TOKEN (expired/revoked?)."
+    echo "Aborting BEFORE training so no GPU time is wasted. Refresh the PAT and relaunch."
+    # Nothing has been computed yet, so deleting the sandbox here loses nothing.
+    PUSH_OK=1
+    self_stop_now=1
+  fi
 fi
 
 push_results() {
@@ -47,22 +69,50 @@ push_results() {
   # results db and push nothing useful. Force-add this specific results file.
   git add -f "$LOCAL_DB"
   git commit -m "Week 4 (Daytona ${MODEL}): ${label}" >/dev/null 2>&1
-  # Rebase-pull first: the two per-model sandboxes push the same branch, so land
-  # each other's commits instead of racing/rejecting.
-  git pull --rebase --autostash origin main >/dev/null 2>&1 || true
-  if git push origin main; then
-    echo "  -> pushed ${LOCAL_DB} to GitHub (${label})"
-  else
-    echo "  -> WARNING: push failed (${label}); ${LOCAL_DB} is still on the sandbox disk"
-  fi
+  # Retry: a single transient failure (network blip, rate limit, a racing push from
+  # the sibling sandbox) must not be the difference between keeping and losing a
+  # multi-hour result. Re-pull before each attempt so a rejected non-fast-forward
+  # gets a fresh base.
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    # Rebase-pull first: the two per-model sandboxes push the same branch, so land
+    # each other's commits instead of racing/rejecting.
+    git pull --rebase --autostash origin main >/dev/null 2>&1 || true
+    if git push origin main; then
+      echo "  -> pushed ${LOCAL_DB} to GitHub (${label}, attempt ${attempt})"
+      PUSH_OK=1
+      return
+    fi
+    echo "  -> push attempt ${attempt}/5 failed (${label}); retrying in $((attempt * 30))s"
+    sleep $((attempt * 30))
+  done
+  PUSH_OK=0
+  echo "  -> ERROR: all 5 push attempts failed (${label}); ${LOCAL_DB} exists ONLY on this sandbox"
 }
 
 self_stop() {
-  # Delete this sandbox from within itself so there's no idle billing. Results are
-  # already on GitHub, so even if this fails nothing is lost -- the sandbox just
-  # keeps billing until stopped manually / by the recover tool.
+  # Delete this sandbox from within itself so there's no idle billing -- but ONLY
+  # when the results are provably safe on GitHub.
+  #
+  # This used to run unconditionally, which made the failure mode catastrophic
+  # rather than merely annoying: GPU sandboxes require auto_delete_interval=0
+  # ("must be ephemeral"), so a stopped sandbox is deleted instantly and its disk
+  # goes with it. On 2026-08-08 an expired PAT made the push fail; this function
+  # then deleted the only copy of a completed 200-epoch run. Idle billing (~$2.2/h,
+  # and visible in the dashboard) is strictly cheaper than re-running (~$12 + 4.7h),
+  # so when the push failed we keep the sandbox ALIVE and shout about it instead.
+  if [ "$PUSH_OK" -ne 1 ]; then
+    echo "=================================================================="
+    echo "NOT self-stopping: results were never pushed."
+    echo "Sandbox ${SANDBOX_ID:-<unknown>} is being LEFT RUNNING (~\$2.2/h) so"
+    echo "${LOCAL_DB} can still be recovered from ${REPO_DIR}/${LOCAL_DB}."
+    echo "Recover it, THEN stop the sandbox manually:"
+    echo "  uv run python scripts/daytona_recover.py ${SANDBOX_ID:-<id>}"
+    echo "=================================================================="
+    return
+  fi
   if [ -n "${DAYTONA_API_KEY:-}" ] && [ -n "${SANDBOX_ID:-}" ]; then
-    echo "=== Self-stopping sandbox ${SANDBOX_ID} (results already pushed) ==="
+    echo "=== Self-stopping sandbox ${SANDBOX_ID} (results confirmed pushed) ==="
     "$UV" run python - <<'PY'
 import os
 from daytona import Daytona, DaytonaConfig
@@ -74,6 +124,12 @@ PY
     echo "DAYTONA_API_KEY/SANDBOX_ID not set -- NOT self-stopping. Stop it manually."
   fi
 }
+
+# Pre-flight said the credentials are dead: bail out before burning GPU hours.
+if [ "${self_stop_now:-0}" = "1" ]; then
+  self_stop
+  exit 1
+fi
 
 # Data was uploaded by the launcher (grouplens blocks the sandbox IP); just build
 # the RecBole atomic files.
@@ -91,12 +147,15 @@ fi
 push_results "final results"
 
 # Completion marker so a watcher can tell this model is done from GitHub alone.
-touch "WEEK4_${MODEL}_DONE"
-if [ -n "${GITHUB_TOKEN:-}" ]; then
+# Only emitted once the results themselves are safely pushed -- an earlier version
+# committed this marker on the failure path too, so "sweep complete" appeared in
+# the history for runs whose results never arrived.
+if [ "$PUSH_OK" -eq 1 ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+  touch "WEEK4_${MODEL}_DONE"
   git add "WEEK4_${MODEL}_DONE"
   git commit -m "Week 4 (Daytona ${MODEL}): sweep complete" >/dev/null 2>&1
   git pull --rebase --autostash origin main >/dev/null 2>&1 || true
-  git push origin main || echo "  -> WARNING: marker push failed"
+  git push origin main || echo "  -> WARNING: marker push failed (results themselves are safe)"
 fi
 
 self_stop
