@@ -329,7 +329,7 @@ def budgets_arg_for(budget_map: dict, model: str) -> str:
     return ",".join(f"{epochs}:{name}" for epochs, name in budget_map[model])
 
 
-def main(models: list[str], budget_map: dict, local_db_path: str) -> None:
+def main(models: list[str], budget_map: dict, local_db_path: str, configs: str | None = None) -> None:
     """Local-driven path: this process stays connected, streams progress, and
     downloads mlflow.db. Needs the laptop awake for the whole run. See
     main_detached for the Mac-independent path."""
@@ -352,7 +352,8 @@ def main(models: list[str], budget_map: dict, local_db_path: str) -> None:
                 sandbox,
                 train_session,
                 f"{UV} run python -m src.recbole_run --model {model} "
-                f"--budgets {budgets_arg_for(budget_map, model)}",
+                f"--budgets {budgets_arg_for(budget_map, model)}"
+                + (f" --config {configs}" if configs else ""),
                 cwd=REPO_DIR,
             )
             sandbox.fs.download_file(f"{REPO_DIR}/mlflow.db", local_db_path)
@@ -369,7 +370,12 @@ def main(models: list[str], budget_map: dict, local_db_path: str) -> None:
         print("=" * 70)
 
 
-def main_detached(models: list[str], budget_map: dict) -> None:
+def main_detached(
+    models: list[str],
+    budget_map: dict,
+    configs: str | None = None,
+    run_tag: str | None = None,
+) -> None:
     """Autonomous, Mac-independent path. For each model: provision a sandbox, then
     launch scripts/daytona_remote_runner.sh DETACHED inside it (nohup + run_async)
     so training survives this laptop sleeping/closing. The runner pushes results to
@@ -408,8 +414,13 @@ def main_detached(models: list[str], budget_map: dict) -> None:
             f"export RECBOLE_NUM_THREADS={TRAIN_THREADS}\n"
             f"export OMP_NUM_THREADS={TRAIN_THREADS}\n"
             f"export SANDBOX_ID={sandbox.id}\n"
-            f"export DAYTONA_API_KEY={api_key}\n"
-            f"export GITHUB_TOKEN={github_token}\n"
+            # Only set when overridden: the runner defaults CONFIGS to the base
+            # config and RUN_TAG to MODEL, so an unmodified sweep behaves exactly
+            # as before these knobs existed.
+            + (f"export CONFIGS={configs}\n" if configs else "")
+            + (f"export RUN_TAG={run_tag}\n" if run_tag else "")
+            + f"export DAYTONA_API_KEY={api_key}\n"
+            + f"export GITHUB_TOKEN={github_token}\n"
         )
         env_remote = f"{REPO_DIR}/.week4_env"
         sandbox.fs.upload_file(env_lines.encode(), env_remote)
@@ -472,6 +483,23 @@ if __name__ == "__main__":
         "instead of the full 1x/4x/10x trajectory. Every budget must be divisible by "
         "eval_step (10) or its milestone checkpoint is never captured.",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Comma-separated RecBole config files, layered left-to-right so later files "
+        "override earlier ones. Use this to run a variant as an overlay on the shared "
+        'base, e.g. "configs/recbole/ml1m_base.yaml,configs/recbole/ml1m_sasrec_dropout02.yaml". '
+        "Default: the base config alone.",
+    )
+    parser.add_argument(
+        "--run-tag",
+        type=str,
+        default=None,
+        help="Names the results db (mlflow_daytona_week4_<TAG>.db) and DONE marker. "
+        "Defaults to the model name. Set it for a variant run so it does not overwrite "
+        "the default-config run's results for the same model.",
+    )
     args = parser.parse_args()
 
     budget_map = SMOKE_BUDGETS if args.smoke else BUDGETS
@@ -491,10 +519,12 @@ if __name__ == "__main__":
     if args.detached:
         # Autonomous path: one sandbox per model, fire-and-forget. Results come back
         # via GitHub (mlflow_daytona_week4_<MODEL>.db), not a local download.
-        main_detached(models, budget_map)
+        main_detached(models, budget_map, configs=args.config, run_tag=args.run_tag)
     else:
         # Local-driven path: distinct db filename per variant so parallel per-model
         # runs (and smoke runs) don't clobber each other's downloads.
-        suffix = (f"_{args.model}" if args.model else "") + ("_smoke" if args.smoke else "")
+        suffix = (f"_{args.run_tag or args.model}" if (args.run_tag or args.model) else "") + (
+            "_smoke" if args.smoke else ""
+        )
         db_path = f"mlflow_daytona_week4{suffix}.db"
-        main(models, budget_map, db_path)
+        main(models, budget_map, db_path, configs=args.config)

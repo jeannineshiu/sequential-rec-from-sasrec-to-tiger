@@ -46,3 +46,6 @@ notes/
 
 # Week 4 Daytona launch/run logs (throwaway)
 week4*.log
+
+# RecBole logger output (regenerable)
+log/

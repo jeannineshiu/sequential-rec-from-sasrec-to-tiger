@@ -116,10 +116,86 @@ def pick_device() -> torch.device:
     return torch.device("cpu")
 
 
+def export_scores(trainer, test_data, dataset, ckpt_path: str, out_path: str) -> None:
+    """Dump the full item-score matrix for the test set, plus the token maps needed
+    to align it with this repo's own data.
+
+    Why: RecBole's evaluator draws its own 1+100 uniform negatives (`uni100`) instead
+    of consuming `data/processed/ml-1m/negatives.json`, and it was run uni100-only, so
+    the RecBole rows in the master table carry a negative-draw caveat and have no
+    full-ranking numbers at all. Both are fixable *off* the GPU: with raw scores in
+    hand, `src/eval/{sampled,full_ranking}.py` can rescore these predictions on this
+    repo's fixed negatives and against the full catalog, on a laptop, for free.
+
+    Exporting the dumb thing (a score matrix) rather than computing metrics here is
+    deliberate: the id-mapping between RecBole's internal indices and this repo's is
+    the only fiddly part, and doing it locally means it can be iterated on without
+    burning GPU hours or risking a mid-run crash.
+
+    Called inside a try/except by the caller -- a failure here must never cost a
+    completed training run, since every metric is already logged by this point.
+
+    Stored as float16: the full matrix is ~6040 users x ~3417 items, which is ~83MB
+    in float32 and lands in git via the sandbox's push (GitHub warns over 50MB and
+    hard-rejects over 100MB -- and a rejected push is the exact failure that
+    destroyed a run on 2026-08-08). float16 halves it to a safe ~40MB at the cost of
+    ~1e-3 relative precision, which can only change a rank when two items' logits
+    differ by less than that. Worth recording as a caveat on any metric computed
+    from this file, though it is orders of magnitude below the 1-6% margins under
+    discussion.
+    """
+    import numpy as _np
+
+    model = trainer.model
+    model.eval()
+    # field2id_token maps RecBole's internal contiguous index -> original dataset
+    # token (the raw ML-1M user/item id as a string). Index 0 is RecBole's [PAD].
+    item_tokens = dataset.field2id_token[dataset.iid_field]
+    user_tokens = dataset.field2id_token[dataset.uid_field]
+
+    rows, users = [], []
+    uid_field = dataset.uid_field
+    # Under eval mode uni100 the test loader is a NegSampleEvalDataLoader: it emits
+    # 101 rows per user (the positive plus its 100 sampled negatives), all sharing
+    # the SAME input sequence. full_sort_predict scores the whole catalog from that
+    # sequence, so those 101 rows come back bit-identical -- verified on a smoke run.
+    # Scoring them all would waste 101x the compute and, more importantly, write a
+    # 101x-redundant matrix (a measured 68MB even after compression, uncomfortably
+    # close to GitHub's 100MB hard limit on the sandbox's push). Keep the first row
+    # per user.
+    seen: set[int] = set()
+    with torch.no_grad():
+        for batched_data in test_data:
+            interaction = batched_data[0].to(model.device)
+            uids = interaction[uid_field].cpu().numpy()
+            keep = _np.zeros(len(uids), dtype=bool)
+            for i, uid in enumerate(uids):
+                if uid not in seen:
+                    seen.add(uid)
+                    keep[i] = True
+            if not keep.any():
+                continue
+            # full_sort_predict returns scores over every item, which is exactly what
+            # a full-ranking evaluator needs; uni100 candidate lists are irrelevant here.
+            scores = model.full_sort_predict(interaction).view(len(interaction), -1)
+            rows.append(scores.cpu().numpy()[keep].astype(_np.float16))
+            users.append(uids[keep])
+
+    _np.savez_compressed(
+        out_path,
+        scores=_np.concatenate(rows, axis=0),
+        user_index=_np.concatenate(users, axis=0),
+        item_tokens=_np.asarray(item_tokens, dtype=object).astype(str),
+        user_tokens=_np.asarray(user_tokens, dtype=object).astype(str),
+        checkpoint=_np.asarray(ckpt_path),
+    )
+    print(f"  [export] wrote test score matrix to {out_path}", flush=True)
+
+
 def run(
     model_name: str,
     budgets: list[tuple[int, str]],
-    config_path: str = "configs/recbole/ml1m_base.yaml",
+    config_paths: list[str] | None = None,
     seed: int = 42,
 ) -> list[dict]:
     """Train ``model_name`` ONCE to the largest budget and record a result for
@@ -145,10 +221,15 @@ def run(
     milestone_names = {epochs: name for epochs, name in budgets}
     max_epochs = budgets[-1][0]
 
+    # Multiple config files layer left-to-right (RecBole applies them in order), so
+    # a variant is an overlay on the shared base rather than a forked copy of it --
+    # e.g. ml1m_base.yaml + ml1m_sasrec_dropout02.yaml. Keeps the protocol settings
+    # (split, negatives, budget, metrics) defined in exactly one place.
+    config_paths = config_paths or ["configs/recbole/ml1m_base.yaml"]
     config = Config(
         model=model_name,
         dataset="ml-1m",
-        config_file_list=[config_path],
+        config_file_list=list(config_paths),
         config_dict={"epochs": max_epochs, "seed": seed},
     )
 
@@ -241,10 +322,38 @@ def run(
                 "device": str(device),
                 # Record that all budgets came from one shared trajectory.
                 "trained_to_epochs": max_epochs,
+                # Week 4 found that RecBole's per-model DEFAULTS are asymmetric --
+                # SASRec ships dropout 0.5, BERT4Rec 0.2, with every other
+                # architectural default identical -- and that this is the likely
+                # driver of the flipped BERT4Rec-vs-SASRec headline. Runs that
+                # differ only by an unlogged default are indistinguishable in the
+                # master table, which is precisely how the asymmetry went unnoticed
+                # in the first place. Log the knobs that vary.
+                "hidden_dropout_prob": config["hidden_dropout_prob"],
+                "attn_dropout_prob": config["attn_dropout_prob"],
+                "hidden_size": config["hidden_size"],
+                "n_heads": config["n_heads"],
+                "n_layers": config["n_layers"],
+                "loss_type": config["loss_type"],
+                "train_batch_size": config["train_batch_size"],
+                "configs": "+".join(os.path.basename(p) for p in config_paths),
             },
             metrics=metrics,
         )
         results.append(metrics)
+
+        # Raw test scores for offline rescoring through this repo's own evaluator
+        # (fixed negatives + full ranking -- see export_scores). Strictly a bonus
+        # artifact: metrics for this budget are already logged above, so any
+        # failure here is reported and swallowed rather than allowed to take down
+        # a multi-hour run at its very last step.
+        try:
+            os.makedirs("results/scores", exist_ok=True)
+            export_scores(
+                trainer, test_data, dataset, ckpt_path, f"results/scores/{run_name}.npz"
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail a completed run over an extra
+            print(f"  [warn] score export failed for {run_name}: {exc!r}", flush=True)
     return results
 
 
@@ -257,6 +366,8 @@ if __name__ == "__main__":
     # Back-compat single-budget path (used by scripts/daytona_remote_runner.sh).
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--run-name", type=str, default=None)
+    # Comma-separated, applied left-to-right so later files override earlier ones:
+    # "configs/recbole/ml1m_base.yaml,configs/recbole/ml1m_sasrec_dropout02.yaml".
     parser.add_argument("--config", type=str, default="configs/recbole/ml1m_base.yaml")
     args = parser.parse_args()
 
@@ -269,4 +380,4 @@ if __name__ == "__main__":
         budgets = [(args.epochs, args.run_name)]
     else:
         parser.error("provide either --budgets or both --epochs and --run-name")
-    run(args.model, budgets, config_path=args.config)
+    run(args.model, budgets, config_paths=[p for p in args.config.split(",") if p])

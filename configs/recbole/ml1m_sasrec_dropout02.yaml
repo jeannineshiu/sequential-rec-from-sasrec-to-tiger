@@ -1,0 +1,29 @@
+# Overlay on ml1m_base.yaml -- pass BOTH, in order:
+#   --config configs/recbole/ml1m_base.yaml,configs/recbole/ml1m_sasrec_dropout02.yaml
+# RecBole's config_file_list applies files left-to-right, so these keys win.
+#
+# WHY THIS RUN EXISTS
+#
+# Week 4's headline flipped depending on which SASRec BERT4Rec was compared
+# against: BERT4Rec beat RecBole's SASRec (+3.39% HR@10 / +5.86% NDCG@10) but
+# merely tied this repo's (-1.95% / +1.47%). Same BERT4Rec run, opposite
+# conclusion, and the only thing that changed was the baseline.
+#
+# The most plausible mechanism is an asymmetry nobody chose deliberately:
+# RecBole ships SASRec with dropout 0.5 and BERT4Rec with 0.2. On ML-1M -- dense,
+# ~165 actions/user -- that is a real handicap, and this repo's own ML-1M config
+# uses 0.2 while reserving 0.5 for sparse Beauty. This run tests that hypothesis
+# by changing dropout and NOTHING else: d=64, 2 heads, CE loss and batch 2048 all
+# stay at RecBole's defaults, exactly as in the sasrec_recbole_1x run this is
+# compared against.
+#
+# What it does NOT do: serve as M4's like-for-like <2% cross-validation against
+# this repo's implementation. That would additionally need d=50, 1 head, BCE with
+# 1 negative, and batch 128 -- five variables at once, which would answer M4's
+# criterion while telling us nothing about dropout. Deliberately kept separate.
+#
+# SASRec in RecBole has two dropout knobs and the default sets both to 0.5;
+# leaving attn at 0.5 would only half-test the hypothesis, so both move to 0.2
+# (the same value this repo's configs/sasrec_ml1m.yaml uses).
+hidden_dropout_prob: 0.2
+attn_dropout_prob: 0.2

@@ -15,9 +15,13 @@
 #   GITHUB_TOKEN     PAT with contents:write   (push results back to the repo)
 #   DAYTONA_API_KEY  Daytona key               (self-stop at the end)
 #   SANDBOX_ID       this sandbox's id         (self-stop target)
+# Optional:
+#   CONFIGS          comma-separated RecBole config files, layered left-to-right
+#                    (default: configs/recbole/ml1m_base.yaml)
+#   RUN_TAG          names the results file and DONE marker (default: $MODEL)
 #
-# Results land in the repo as mlflow_daytona_week4_<MODEL>.db on branch main, plus
-# a WEEK4_<MODEL>_DONE marker commit. Watch progress by pulling the repo, or SSH
+# Results land in the repo as mlflow_daytona_week4_<RUN_TAG>.db on branch main, plus
+# a WEEK4_<RUN_TAG>_DONE marker commit. Watch progress by pulling the repo, or SSH
 # in and `tail -f run.log`.
 
 set -uo pipefail
@@ -26,9 +30,15 @@ UV="$HOME/.local/bin/uv"
 REPO_DIR="$(pwd)"
 MODEL="${MODEL:?MODEL not set}"
 BUDGETS="${BUDGETS:?BUDGETS not set}"
-LOCAL_DB="mlflow_daytona_week4_${MODEL}.db"
+CONFIGS="${CONFIGS:-configs/recbole/ml1m_base.yaml}"
+# A variant run (e.g. SASRec at dropout 0.2) is still MODEL=SASRec, so keying the
+# results file on MODEL alone would overwrite the previous SASRec run's db and
+# DONE marker in the repo. RUN_TAG separates them.
+RUN_TAG="${RUN_TAG:-$MODEL}"
+LOCAL_DB="mlflow_daytona_week4_${RUN_TAG}.db"
 
-echo "=== Week 4 autonomous runner: model=${MODEL} budgets=${BUDGETS} ==="
+echo "=== Week 4 autonomous runner: model=${MODEL} tag=${RUN_TAG} budgets=${BUDGETS} ==="
+echo "=== configs: ${CONFIGS} ==="
 
 # Tracks whether the results db is safely off this sandbox. self_stop refuses to
 # delete the sandbox unless this is 1 -- see the comment on self_stop.
@@ -68,7 +78,12 @@ push_results() {
   # -f: .gitignore has `mlflow*.db`, so a plain `git add` would silently skip the
   # results db and push nothing useful. Force-add this specific results file.
   git add -f "$LOCAL_DB"
-  git commit -m "Week 4 (Daytona ${MODEL}): ${label}" >/dev/null 2>&1
+  # Raw test score matrices (results/scores/*.npz) let the metrics be recomputed
+  # locally with this repo's own evaluator -- fixed negatives and full ranking --
+  # so they ride back with the db rather than dying with the sandbox. Not ignored,
+  # so a plain add suffices; the || true keeps a run with no export from failing here.
+  git add results/scores 2>/dev/null || true
+  git commit -m "Week 4 (Daytona ${RUN_TAG}): ${label}" >/dev/null 2>&1
   # Retry: a single transient failure (network blip, rate limit, a racing push from
   # the sibling sandbox) must not be the difference between keeping and losing a
   # multi-hour result. Re-pull before each attempt so a rejected non-fast-forward
@@ -138,7 +153,7 @@ echo "=== convert_to_atomic ==="
 
 # One trajectory to the largest budget; recbole_run logs every budget milestone.
 echo "=== training: ${MODEL} (${BUDGETS}) ==="
-if "$UV" run python -m src.recbole_run --model "$MODEL" --budgets "$BUDGETS"; then
+if "$UV" run python -m src.recbole_run --model "$MODEL" --budgets "$BUDGETS" --config "$CONFIGS"; then
   echo "  -> ${MODEL} training complete"
 else
   echo "  -> WARNING: ${MODEL} training FAILED (exit $?) -- pushing whatever synced, then stopping"
@@ -151,9 +166,9 @@ push_results "final results"
 # committed this marker on the failure path too, so "sweep complete" appeared in
 # the history for runs whose results never arrived.
 if [ "$PUSH_OK" -eq 1 ] && [ -n "${GITHUB_TOKEN:-}" ]; then
-  touch "WEEK4_${MODEL}_DONE"
-  git add "WEEK4_${MODEL}_DONE"
-  git commit -m "Week 4 (Daytona ${MODEL}): sweep complete" >/dev/null 2>&1
+  touch "WEEK4_${RUN_TAG}_DONE"
+  git add "WEEK4_${RUN_TAG}_DONE"
+  git commit -m "Week 4 (Daytona ${RUN_TAG}): sweep complete" >/dev/null 2>&1
   git pull --rebase --autostash origin main >/dev/null 2>&1 || true
   git push origin main || echo "  -> WARNING: marker push failed (results themselves are safe)"
 fi
