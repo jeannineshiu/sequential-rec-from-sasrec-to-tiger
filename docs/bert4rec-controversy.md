@@ -345,9 +345,10 @@ version of the headline is:
 > budget, under this protocol, is a baseline-configuration artifact.
 
 Two limits on that sentence, both from §4. It rests on the sampled protocol, and the one run
-with both protocols shows them diverging by 40–50%; and every number is a single seed, with
-margins well inside plausible seed noise. The dropout effect is large enough to survive both
-concerns. The residual SASRec-over-BERT4Rec margin (+0.31% / +0.45%) is not — that is a tie.
+with both protocols shows them diverging by 40–50%. And every RecBole number is a single
+seed — though the measured noise floor (§6) puts the dropout effect at 4–6x it, so that
+concern is now quantified rather than open. The residual SASRec-over-BERT4Rec margin
+(+0.31% / +0.45%) sits *inside* the floor: that is a tie, measured.
 
 ---
 
@@ -359,11 +360,15 @@ whose predictions no longer exist.
 
 Remaining, in cost order, cheapest first:
 
-1. **A seed-variance study** (~14 GPU-hours for 3 extra seeds on the two dropout-0.2 runs).
-   The cheapest thing that would change how much any margin here can be trusted. Every
-   number in this document is seed 42, and the residual SASRec-vs-BERT4Rec margin
-   (+0.31% / +0.45%) is almost certainly inside seed noise. The dropout effect (+3.71% /
-   +6.33%) is large enough that it probably is not, but that is an assumption.
+1. ~~A seed-variance study~~ — **done cheaply, on the wrong model on purpose.** Five seeds of
+   *this repo's* SASRec cost nothing (laptop, ~20 min each) and establish a noise floor of
+   **0.96% sampled / 3.37% full** (2·√2·σ; see README and `scripts/seed_variance.py`). Read
+   against it, every conclusion in §3 holds: the dropout effect is 4–6x the floor, and the
+   residual SASRec-over-BERT4Rec margin (+0.31% / +0.45%) is inside it, confirming the tie as
+   a measurement rather than a hedge. **The floor is borrowed, not measured, for the RecBole
+   runs** — different model, framework and loss. Repeating a RecBole config across seeds
+   (~14 GPU-hours) would replace the proxy with the real thing; it is no longer urgent, since
+   the margins that matter clear the borrowed floor by a wide margin.
 2. **A loss ablation: RecBole SASRec at dropout 0.2 with BCE + 1 sampled negative**
    (~4.7 GPU-hours). Tests §4's explanation for the 40–53% full-ranking divergence, which is
    currently the largest unexplained effect in the project and the one that most undermines

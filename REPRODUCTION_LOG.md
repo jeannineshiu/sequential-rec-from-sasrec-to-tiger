@@ -467,3 +467,84 @@ established above seed noise) → loss-only ablation to test the full-ranking di
 repeated on full ranking (~10.5) → one 4x point per model for the budget curve (~23).
 
 ---
+
+## Seed variance — the noise floor, and what it invalidates
+
+**2026-08-09**
+
+The seed study above was costed at ~14 GPU-hours because it was scoped to the RecBole runs.
+That was the wrong scope for a first pass. This repo's own SASRec trains in ~20 minutes on
+laptop MPS, so five seeds of it cost nothing but wall-clock and answer the question that
+actually blocks everything else: **how large does a margin have to be here before it means
+anything?** If that number had come back at ±3%, the Week 4 headline would have been in
+trouble and a GPU-based seed study would have been worth buying. It did not, so it isn't.
+
+Five seeds (42, 1, 2, 3, 4), varying only `train.seed` — weight init and the *training*
+negative sampler. Evaluation negatives stay frozen for every run, so this measures training
+noise and not evaluation-sampling noise. Added `--seed` / `--run-name` overrides to
+`src/train.py` rather than creating five near-duplicate config files.
+
+| Metric | mean | rel. std | range |
+|---|---|---|---|
+| sampled HR@10 | 0.8188 | 0.28% | 0.71% |
+| sampled NDCG@10 | 0.5925 | 0.34% | 0.83% |
+| full HR@10 | 0.2453 | 1.19% | 2.97% |
+| full NDCG@10 | 0.1305 | 1.08% | 2.45% |
+
+**Full-ranking metrics are ~4x noisier than sampled ones.** That is a useful result on its
+own and not one I expected to be so clean: ranking against 3,416 items is far more sensitive
+to initialization than ranking against 101. Every full-ranking comparison in this repo needs
+a wider band than its sampled counterpart, and a single global noise floor would be wrong in
+both directions.
+
+Two details of the floor's construction, both of which I got wrong on the first pass:
+
+- **Per-protocol, not global.** The first version took the worst relative std across all four
+  metrics (1.19%, from full HR@10) and applied it everywhere. That is four times too strict
+  for sampled comparisons and would have wrongly declared two live Week 3 results dead.
+- **√2, not 1.** Every claimed margin is a difference between two runs each measured once, so
+  the difference carries both runs' noise: σ_diff = √2·σ. The floor is 2·√2·σ, giving
+  **0.96% sampled / 3.37% full**.
+
+`scripts/seed_variance.py` prints every margin claimed in this repo against these floors.
+
+### Week 4 survives; two Week 3 conclusions do not
+
+Week 4 is clean. The dropout effect (+3.71% / +6.33%) is 4–6x the sampled floor. The residual
+SASRec-over-BERT4Rec margin at matched dropout (+0.31%) is inside noise, confirming as a
+measurement what was already reported as a tie. The M4 cross-check's HR@10 agreement (+0.61%)
+is *also* inside noise — which is a stronger result than "passes <2%": on sampled HR@10 the
+two independent implementations are indistinguishable. Its NDCG@10 disagreement (+7.41%) and
+the full-ranking divergence (+40.1%, against a 3.37% floor) are both real signal.
+
+Week 3 did not fare as well, for a reason unrelated to seeds. **The ablation table was using
+the 200-epoch headline run as its baseline while every ablation ran at 100 epochs**, so each
+delta was also being charged for 100 fewer epochs of training. The README's own limitation
+section said ablations "compare configs against each other" — the table did not do that.
+
+Ran the baseline config at exactly 100 epochs (`ablation_ml1m_baseline_100ep`, ~10 minutes,
+free) to get the missing row. The budget effect it exposes is small on sampled HR@10 (+0.47%,
+itself inside noise) but large on full HR@10 (**+5.36%**), and correcting for it reverses two
+conclusions:
+
+| Ablation, full HR@10 | vs 200-epoch baseline (wrong) | vs 100-epoch baseline (right) | verdict |
+|---|---|---|---|
+| A1 posemb = none | −7.43% | −2.47% | **inside noise** |
+| A2 maxlen = 100 | −5.21% | −0.13% | **inside noise** |
+| A1 posemb = sinusoidal | −11.84% | −7.11% | real |
+| A2 maxlen = 50 | −17.86% | −13.45% | real |
+| A4 neg = popularity | −24.40% | −20.35% | real |
+
+So **maxlen 100 and 200 are indistinguishable on full ranking at this budget**, at less than
+half the per-epoch cost (2.85s vs 5.85s) — the opposite of what the table implied. And
+dropping positional embeddings entirely is a ~1% sampled regression with no detectable
+full-ranking cost, while *sinusoidal* embeddings are the variant that clearly hurts. The
+original table made learnable-vs-none look like the important comparison; it is
+learnable-vs-sinusoidal.
+
+The general lesson is the same one Week 4 produced, in a different costume: a comparison is
+only as good as its baseline. Week 4's baseline carried an unexamined framework default;
+Week 3's carried an unexamined epoch budget. Both were introduced while carefully controlling
+something else.
+
+---

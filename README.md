@@ -90,16 +90,52 @@ run — but it is the largest unexplained effect in the project.
 
 TIGER-style comparison pending Week 6.
 
-### Ablations (ML-1M, sampled/full HR@10, test set, k=10 — 100 epochs, see REPRODUCTION_LOG.md for full analysis)
+### Ablations (ML-1M, test set, k=10 — **all rows at 100 epochs**, see REPRODUCTION_LOG.md)
 
-| Ablation | sampled HR@10 | full HR@10 | avg sec/epoch |
+Deltas are against the 100-epoch baseline, and marked against the measured seed-noise floor
+(sampled 0.96%, full 3.37% — see below). `~` means the difference is inside seed noise.
+
+| Ablation | sampled HR@10 | Δ | full HR@10 | Δ | avg sec/epoch |
+|---|---|---|---|---|---|
+| **Baseline (learnable pos emb, maxlen 200)** | **0.8152** | — | **0.2349** | — | 5.85 |
+| A1: positional embedding = none | 0.8066 | −1.05% | 0.2291 | ~ −2.47% | 7.47 |
+| A1: positional embedding = sinusoidal | 0.8147 | ~ −0.06% | 0.2182 | −7.11% | 6.91 |
+| A2: maxlen = 50 | 0.7858 | −3.61% | 0.2033 | −13.45% | 1.53 |
+| A2: maxlen = 100 | 0.8058 | −1.15% | 0.2346 | ~ −0.13% | 2.85 |
+| A4: negative sampling = popularity-weighted | 0.7540 | −7.51% | 0.1871 | −20.35% | 6.93 |
+
+**This table previously used the 200-epoch headline run as its baseline**, against which every
+ablation was also being charged for 100 fewer epochs of training. That budget effect is small
+on sampled HR@10 (+0.47%) but large on full HR@10 (+5.36%), and correcting it reverses two
+conclusions: A1-none and A2-maxlen100 both looked like real full-ranking regressions
+(−7.43% / −5.21%) and are in fact inside seed noise. Read literally, **maxlen 100 and 200 are
+indistinguishable on full ranking at this budget** — at less than half the per-epoch cost.
+
+Positional embeddings are the interesting row: dropping them entirely costs ~1% on sampled
+HR@10 and nothing detectable on full ranking, while *sinusoidal* embeddings are the one
+variant that clearly hurts full ranking (−7.11%). Learnable-vs-none is nearly a wash here;
+learnable-vs-sinusoidal is not.
+
+### Seed variance (ML-1M, this repo's SASRec, 5 seeds: 42, 1, 2, 3, 4)
+
+Only the training seed varies — weight init and the training negative sampler. Evaluation
+negatives stay frozen (`negatives.json`, seed 42), so this is training noise alone.
+
+| Metric | mean | rel. std | range |
 |---|---|---|---|
-| Baseline (learnable pos emb, maxlen 200) | 0.8190 | 0.2475 | ~7.0 |
-| A1: positional embedding = none | 0.8066 | 0.2291 | 7.47 |
-| A1: positional embedding = sinusoidal | 0.8147 | 0.2182 | 6.91 |
-| A2: maxlen = 50 | 0.7858 | 0.2033 | 1.53 |
-| A2: maxlen = 100 | 0.8058 | 0.2346 | 2.85 |
-| A4: negative sampling = popularity-weighted | 0.7540 | 0.1871 | 6.93 |
+| sampled HR@10 | 0.8188 | 0.28% | 0.71% |
+| sampled NDCG@10 | 0.5925 | 0.34% | 0.83% |
+| full HR@10 | 0.2453 | 1.19% | 2.97% |
+| full NDCG@10 | 0.1305 | 1.08% | 2.45% |
+
+**Full-ranking metrics are ~4x noisier than sampled ones**, which is worth knowing before
+reading any full-ranking comparison in this repo: separating 3,416 items is far more
+sensitive to initialization than separating 101.
+
+Comparisons here are between two runs each measured once, so the relevant floor is
+2·√2·σ: **0.96% sampled, 3.37% full**. `uv run python -m scripts.seed_variance` prints every
+margin claimed in this repo against it. Not a significance test — five seeds estimate σ
+loosely — but enough to separate the claims that survive from the ones that do not.
 
 Full table (script-generated, not hand-copied): [`results/tables/master.md`](results/tables/master.md)
 A3 sampled-vs-full-ranking scatter: [`results/figures/sampled_vs_full.png`](results/figures/sampled_vs_full.png) — clean
@@ -139,6 +175,7 @@ uv run python -m src.baselines --data-dir data/processed/ml-1m
 uv run python -m src.train --config configs/sasrec_ml1m.yaml
 uv run python -m src.train --config configs/sasrec_beauty.yaml
 uv run python -m src.export_results   # rebuilds results/tables/master.md + the A3 figure
+uv run python -m scripts.seed_variance  # noise floor + every claimed margin against it
 uv run pytest tests/
 ```
 
@@ -153,10 +190,15 @@ reporting negative/mixed results rather than hiding them.
 
 - **Beauty SASRec sits 0.43pp above the accepted reproduction band** (0.5097 vs. the
   0.4654–0.5054 target). Reported as-is rather than tuned until it lands inside the band.
-- **Ablations ran at 100 epochs, headline numbers at 200.** Deliberate compute saving —
-  ablations compare configs against each other, not against the paper — but it means the A4
-  popularity-negatives result in particular may be a convergence-speed effect rather than a
-  final ranking.
+- **Ablations run at 100 epochs, headline numbers at 200.** Deliberate compute saving. The
+  ablation table now uses a 100-epoch baseline so both sides of every delta share a budget
+  (it previously did not — see the note under that table), but the results are still a
+  statement about 100-epoch training. A4's popularity-negatives result in particular may be a
+  convergence-speed effect rather than a final ranking.
+- **Seed variance is measured for this repo's SASRec only.** The 0.96% / 3.37% floors come
+  from five seeds of one model on ML-1M and are applied to RecBole runs and Beauty results as
+  a proxy. Those are different models, frameworks, and datasets; the floors are indicative
+  there, not measured.
 - **The BERT4Rec comparisons still rest on the sampled protocol.** Only one RecBole run has
   full-ranking numbers, and for the one pair where both protocols exist they disagree by
   40–53%. Nothing here establishes that the SASRec-vs-BERT4Rec ordering would survive
@@ -170,7 +212,8 @@ reporting negative/mixed results rather than hiding them.
 - **No training-budget curve.** Only the 1x (200-epoch) point was run; the 4x/10x points
   were cut on cost (~58 GPU-hours per model for the full trajectory). The scaling claim at
   the heart of the BERT4Rec controversy is therefore untested here.
-- **No seed-variance study.** Every headline number is a single seed (42). The residual
-  SASRec-vs-BERT4Rec margins (+0.31% / +0.45%) are almost certainly inside seed noise and
-  should be read as a tie. The dropout effect (+3.71% / +6.33%) is an order of magnitude
-  larger and probably survives, but that is an assumption, not a measurement.
+- **Every RecBole number is still a single seed.** Seed variance was measured for this repo's
+  SASRec (above) and used as the floor; it confirms the residual SASRec-vs-BERT4Rec margins
+  (+0.31% / +0.45%) are inside noise and should be read as a tie, and that the dropout effect
+  (+3.71% / +6.33%) is 4–6x the floor. But no RecBole run was repeated across seeds, so the
+  floor applied to them is borrowed rather than measured.

@@ -52,9 +52,23 @@ def make_score_fn(model: SASRec, device: torch.device, mode: str):
     return score_fn
 
 
-def run(config_path: str, max_epochs_override: int | None = None) -> dict:
+def run(
+    config_path: str,
+    max_epochs_override: int | None = None,
+    seed_override: int | None = None,
+    run_name_override: str | None = None,
+) -> dict:
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
+
+    # Overrides exist so a seed-variance study is a loop over one config rather
+    # than N near-duplicate config files. run_name must be overridden alongside
+    # seed: it names both the MLflow run and the checkpoint file, so reusing it
+    # across seeds would overwrite results/checkpoints/<run_name>.pt each time.
+    if seed_override is not None:
+        cfg["train"]["seed"] = seed_override
+    if run_name_override is not None:
+        cfg["mlflow"]["run_name"] = run_name_override
 
     seed = cfg["train"]["seed"]
     torch.manual_seed(seed)
@@ -227,5 +241,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/sasrec_ml1m.yaml")
     parser.add_argument("--max-epochs", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None, help="override train.seed")
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="override mlflow.run_name (also names the checkpoint file)",
+    )
     args = parser.parse_args()
-    run(args.config, max_epochs_override=args.max_epochs)
+    run(
+        args.config,
+        max_epochs_override=args.max_epochs,
+        seed_override=args.seed,
+        run_name_override=args.run_name,
+    )
