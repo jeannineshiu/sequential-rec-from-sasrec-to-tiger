@@ -170,6 +170,15 @@ if __name__ == "__main__":
     parser.add_argument("npz", type=Path, help="results/scores/<run_name>.npz")
     parser.add_argument("--raw-dir", type=Path, default=Path("data/raw/ml-1m"))
     parser.add_argument("--processed-dir", type=Path, default=Path("data/processed/ml-1m"))
+    parser.add_argument(
+        "--log-mlflow",
+        action="store_true",
+        help="Log the rescored metrics to MLflow as a SEPARATE run named "
+        "'<run>_ourprotocol', so results/tables/master.md stays script-generated. It is "
+        "deliberately not merged into the original run's row: that row's uni100 numbers "
+        "are what the other RecBole runs can be compared against, and overwriting them "
+        "with differently-drawn negatives would silently break those comparisons.",
+    )
     args = parser.parse_args()
 
     out = rescore(args.npz, args.raw_dir, args.processed_dir)
@@ -178,3 +187,24 @@ if __name__ == "__main__":
           f"NDCG@10 {out['sampled']['NDCG@10']:.4f}")
     print(f"  full ranking:              HR@10 {out['full']['HR@10']:.4f}  "
           f"NDCG@10 {out['full']['NDCG@10']:.4f}")
+
+    if args.log_mlflow:
+        from src.utils import log_run
+
+        log_run(
+            experiment="sequential-rec",
+            run_name=f"{args.npz.stem}_ourprotocol",
+            params={
+                "model": "SASRec",
+                "dataset": "ml-1m",
+                "framework": "recbole",
+                "rescored_from": args.npz.stem,
+                "protocol": "this-repo evaluator (fixed negatives + full ranking)",
+            },
+            metrics={
+                "test_sampled_HR_at_10": out["sampled"]["HR@10"],
+                "test_sampled_NDCG_at_10": out["sampled"]["NDCG@10"],
+                "test_full_HR_at_10": out["full"]["HR@10"],
+                "test_full_NDCG_at_10": out["full"]["NDCG@10"],
+            },
+        )

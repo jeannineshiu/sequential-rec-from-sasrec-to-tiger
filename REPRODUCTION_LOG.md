@@ -362,3 +362,108 @@ the negative-draw caveat and yields the missing full-ranking numbers) → one 4x
 model (~23 GPU-hours) for an actual budget curve.
 
 ---
+
+## Week 4 (cont.) — the dropout hypothesis, tested and confirmed
+
+**2026-08-09**
+
+### The setup, and why it is a single-variable test
+
+Before spending anything, checked what actually separates RecBole's two models by reading
+`recbole/properties/model/{SASRec,BERT4Rec}.yaml`. They are identical on every architectural
+default — `n_layers: 2`, `n_heads: 2`, `hidden_size: 64`, `inner_size: 256`,
+`loss_type: CE` — and differ on exactly one: dropout, 0.5 for SASRec against 0.2 for
+BERT4Rec. That is stronger than assumed. A dropout-only rerun is not an approximation of a
+single-variable experiment, it *is* one.
+
+`configs/recbole/ml1m_sasrec_dropout02.yaml` is an overlay rather than a forked base config,
+so the protocol settings stay defined in exactly one place; `--config` now takes a
+comma-separated list applied left-to-right. Verified locally that the two files resolve to
+dropout 0.2 with every other key untouched, before launching.
+
+### Two things caught before spending money, and one after
+
+**The score export wrote 101 rows per user.** `export_scores` was added to dump the test
+score matrix so RecBole runs could be rescored offline. A 1-epoch local smoke run produced a
+610,040 x 3,417 matrix for 6,040 users — under `eval_args.mode: uni100` the test loader is a
+`NegSampleEvalDataLoader` that emits one row per positive-plus-negative candidate, all
+sharing an input sequence, so `full_sort_predict` returned 101 bit-identical rows each. At
+68MB compressed that was close enough to GitHub's 100MB hard reject to risk the sandbox's
+results push — the exact failure that destroyed the 2026-08-08 run. Deduplicated to one row
+per user: 37MB. The lesson is narrow and worth keeping: "the file was written" is not
+verification; check its shape.
+
+**A dropout config that silently did not apply would have been invisible for 4.7 hours.**
+The previous two SASRec runs agreed at epoch 19 to four decimal places (train loss
+2721.4937 / 2721.4938), which makes that epoch a free assertion. This run came back at
+**2495.6744** — a 8.3% lower training loss, in the direction less regularization predicts.
+Confirmed the overlay was live 27 minutes in rather than at the end.
+
+**A false pass on M4, caught while writing it up.** The obvious cross-validation number —
+this repo's SASRec against the new run's headline figures — is −1.64% HR@10 / +1.93%
+NDCG@10, inside the ±2% criterion on both metrics. It is also wrong: this repo's sampled
+numbers use the frozen `negatives.json` and RecBole's use its own `uni100` draw, so that
+comparison differences two different negative sets. Recomputed with both sides on the frozen
+negatives it is **+0.61% HR@10 (passes) / +7.41% NDCG@10 (fails)**. The mixed-draw version is
+what falls out of reading the master table's headline columns straight across, and it happens
+to look like a clean pass. Recorded in `docs/bert4rec-controversy.md` §4 precisely because it
+is easy to make.
+
+### Result — RecBole SASRec, dropout 0.2, 200 epochs, ML-1M
+
+Test sampled HR@10 **0.8056**, NDCG@10 **0.6063** (valid 0.8316 / 0.6394), 84.2 s/epoch,
+identical to the default-dropout run's throughput. MLflow run `sasrec_recbole_1x_dropout02`.
+
+| RecBole SASRec | HR@10 | NDCG@10 |
+|---|---|---|
+| dropout 0.5 (default) | 0.7768 | 0.5702 |
+| dropout 0.2 | 0.8056 | 0.6063 |
+| **effect of dropout alone** | **+3.71%** | **+6.33%** |
+
+BERT4Rec's win over the default-configured SASRec was +3.39% / +5.86%. **The dropout default
+alone more than accounts for it.** With the asymmetry removed the comparison does not
+collapse to a tie, it reverses: SASRec ahead by +0.31% / +0.45%, which is itself small enough
+to read as a tie. The hypothesis from the previous section is confirmed, and the Week 4
+headline — BERT4Rec beats SASRec on ML-1M — is a baseline-configuration artifact.
+
+The valid curve was still climbing at epoch 189 (0.6394, a new best) while the run was cut at
+200, so this configuration had not converged. The default-dropout run had plateaued. That
+matters for the budget curve: the 4x point is unlikely to be flat.
+
+### What the offline rescoring added
+
+`scripts/rescore_recbole.py` maps the exported score matrix back into this repo's id space
+(recomputing `reindex_ids` deterministically from the raw ratings, asserting the two 5-core
+filters agree on the item set rather than assuming it) and rescores with `src/eval/metrics`.
+
+Two findings, both about protocol rather than models:
+
+- **The negative draw is worth +2.28% HR@10 / +5.38% NDCG@10** on *identical predictions*
+  (uni100 0.8056/0.6063 vs. frozen negatives 0.8240/0.6389). The caveat this project has been
+  flagging all along now has a number, and it is the same order as every margin in the Week 4
+  analysis.
+- **The two SASRec implementations diverge far more than the sampled protocol suggests.**
+  Against this repo's SASRec: +0.61% sampled HR@10, +7.41% sampled NDCG@10, **+40.1% full
+  HR@10, +53.5% full NDCG@10**. The divergence grows monotonically with how much the metric
+  cares about position. Cross-entropy over the full catalog versus BCE with one sampled
+  negative is the obvious suspect and fits the pattern, but no loss-only ablation was run —
+  this is now the largest unexplained effect in the project.
+
+That last row is the more useful result of the two. "Agrees within 2%" was always a statement
+about one metric under the protocol this repo elsewhere argues is inflationary, and here is a
+case where two implementations agree almost exactly under it while differing by half on the
+protocol it recommends.
+
+### M4 status
+
+| Criterion | Status |
+|---|---|
+| RecBole SASRec within 2% of this repo's | **partially met** — HR@10 +0.61% ✅, NDCG@10 +7.41% ❌ |
+| Signature training-budget figure | **not met** — still only the 1x point |
+
+Remaining work, cheapest first: seed-variance study (~14 GPU-hours; nothing here is
+established above seed noise) → loss-only ablation to test the full-ranking divergence
+(~4.7) → retrain the other two RecBole runs with score export so the comparison can be
+repeated on full ranking (~10.5) → one 4x point per model for the budget curve (~23).
+
+---

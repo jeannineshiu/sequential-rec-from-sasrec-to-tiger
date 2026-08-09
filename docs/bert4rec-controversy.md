@@ -1,11 +1,21 @@
 # The BERT4Rec Reproducibility Controversy — What This Repo's Data Does and Doesn't Show
 
-**Status: partial.** Both models ran at one training-budget point (1x = 200 epochs) under a
+**Status: partial.** All models ran at one training-budget point (1x = 200 epochs) under a
 matched protocol; the 4x/10x points did not run. The headline finding is that **the answer
-flips depending on which SASRec you compare against**, and both SASRecs are defensible. This
-document reports what the two runs support and is explicit about which claims they cannot
-reach. Read alongside [`REPRODUCTION_LOG.md`](../REPRODUCTION_LOG.md), which carries the raw
+flips depending on which SASRec you compare against** — and, as of the fourth run, that the
+flip is *caused* by a single framework default rather than merely correlated with it. This
+document reports what the runs support and is explicit about which claims they cannot reach.
+Read alongside [`REPRODUCTION_LOG.md`](../REPRODUCTION_LOG.md), which carries the raw
 debugging trail.
+
+> **Update (2026-08-09).** The dropout hypothesis in §3 was previously flagged as untested.
+> It has now been tested with a single-variable rerun and **confirmed**: changing only
+> RecBole SASRec's dropout from its default 0.5 to 0.2 moves it by +3.71% HR@10 / +6.33%
+> NDCG@10 — *more* than the entire margin (+3.39% / +5.86%) by which BERT4Rec was said to
+> beat it. With dropout matched, SASRec edges ahead of BERT4Rec on both metrics. The same
+> run meets M4's cross-validation criterion on HR@10 (+0.61%) but not NDCG@10 (+7.41%), and
+> its full-ranking numbers — the first available for any RecBole run here — diverge from this
+> repo's SASRec far more than the sampled ones do. §3, §4, §5 and §6 are updated below.
 
 ---
 
@@ -24,7 +34,7 @@ The claims this project set out to test with its own data:
 | **C1** | BERT4Rec's *default* training configuration is severely undertrained — the originally reported numbers are not reachable with default settings in a reasonable budget. | ❌ Not testable as run (see §4) |
 | **C2** | Given a sufficiently large training budget, BERT4Rec becomes competitive with — and can exceed — SASRec. | ⚠️ One point, consistent with |
 | **C3** | BERT4Rec baseline numbers reported across the downstream literature are inconsistent and frequently not reproducible. | ❌ Out of scope (systematic-review claim, not an experiment) |
-| **C4** | The SASRec-vs-BERT4Rec ranking is driven by training budget and training objective, not by architecture alone. | ❌ Confounded by design (see §4) |
+| **C4** | The SASRec-vs-BERT4Rec ranking is driven by training budget and training objective, not by architecture alone. | ⚠️ Partially — configuration shown to flip it (§3); budget still untested |
 
 C1–C3 are my reading of Petrov & Macdonald's argument; C4 is this project's own framing,
 prompted by the same authors' later work on SASRec training objectives. **Before publishing
@@ -43,14 +53,14 @@ start training. The design here holds the protocol fixed and varies the model:
 
 | Dimension | Setting | Applies to |
 |---|---|---|
-| Dataset | MovieLens-1M, 5-core filtered | all three runs |
-| Split | Leave-one-out, grouped by user, ordered by timestamp | all three runs |
-| Max sequence length | 200 | all three runs |
-| Eval protocol | Sampled: 1 positive + 100 uniform negatives | all three runs |
-| Metrics | HR@10, NDCG@10, test set | all three runs |
-| Epoch budget | 200 | all three runs |
+| Dataset | MovieLens-1M, 5-core filtered | all four runs |
+| Split | Leave-one-out, grouped by user, ordered by timestamp | all four runs |
+| Max sequence length | 200 | all four runs |
+| Eval protocol | Sampled: 1 positive + 100 uniform negatives | all four runs |
+| Metrics | HR@10, NDCG@10, test set | all four runs |
+| Epoch budget | 200 | all four runs |
 
-Three runs: this repo's own from-scratch PyTorch SASRec
+Four runs: this repo's own from-scratch PyTorch SASRec
 ([`src/models/sasrec.py`](../src/models/sasrec.py), `configs/sasrec_ml1m.yaml`), plus SASRec
 and BERT4Rec from RecBole 1.2.1
 ([`configs/recbole/ml1m_base.yaml`](../configs/recbole/ml1m_base.yaml),
@@ -62,7 +72,7 @@ Note what this table does and does not cover: it fixes everything about the *eva
 and nothing about the *models*. Model hyperparameters were left at each implementation's
 own defaults — which turns out to be where the interesting result comes from (§3).
 
-All three results are logged to the same MLflow experiment and exported into
+All four results are logged to the same MLflow experiment and exported into
 [`results/tables/master.md`](../results/tables/master.md) by script, never hand-copied.
 
 ---
@@ -74,25 +84,64 @@ All three results are logged to the same MLflow experiment and exported into
 | Model | Implementation | HR@10 | NDCG@10 | s/epoch | Total train time |
 |---|---|---|---|---|---|
 | SASRec | this repo (PyTorch, MPS) | **0.8190** | 0.5948 | ~7.0 | ~25 min |
-| SASRec | RecBole 1.2.1 (CUDA) | 0.7768 | 0.5702 | 84.2 | 4.7 h |
-| BERT4Rec | RecBole 1.2.1 (CUDA) | 0.8031 | **0.6036** | 104.1 | 5.8 h |
+| SASRec | RecBole 1.2.1, dropout 0.5 (default) | 0.7768 | 0.5702 | 84.2 | 4.7 h |
+| SASRec | RecBole 1.2.1, **dropout 0.2** | 0.8056 | **0.6063** | 84.2 | 4.7 h |
+| BERT4Rec | RecBole 1.2.1 (CUDA, dropout 0.2) | 0.8031 | 0.6036 | 104.1 | 5.8 h |
 
-MLflow runs `sasrec_ml1m`, `sasrec_recbole_1x`, `bert4rec_recbole_1x`.
+MLflow runs `sasrec_ml1m`, `sasrec_recbole_1x`, `sasrec_recbole_1x_dropout02`,
+`bert4rec_recbole_1x`.
 
 ### The result depends on which SASRec you ask
 
-Those three rows contain two different answers to "does BERT4Rec beat SASRec?", and the
+The first three rows contain two different answers to "does BERT4Rec beat SASRec?", and the
 only thing that changes between them is which SASRec is used as the baseline:
 
 | Comparison | HR@10 | NDCG@10 | Winner |
 |---|---|---|---|
-| RecBole BERT4Rec vs. **RecBole** SASRec | +3.39% | +5.86% | **BERT4Rec, on both** |
-| RecBole BERT4Rec vs. **this repo's** SASRec | −1.95% | +1.47% | **a tie** (one metric each) |
+| RecBole BERT4Rec vs. RecBole SASRec (**dropout 0.5**) | +3.39% | +5.86% | **BERT4Rec, on both** |
+| RecBole BERT4Rec vs. **this repo's** SASRec | −1.94% | +1.48% | **a tie** (one metric each) |
+| RecBole BERT4Rec vs. RecBole SASRec (**dropout 0.2**) | −0.31% | −0.45% | **SASRec, on both** |
 
-Against RecBole's own SASRec — same framework, same loss, same protocol, same budget, the
-most "controlled" comparison available here — BERT4Rec wins cleanly on both metrics, which
-would reproduce the original BERT4Rec paper's direction. Against this repo's from-scratch
-SASRec, the same BERT4Rec run is merely tied. **Same BERT4Rec number, opposite conclusion.**
+Against RecBole's default-configured SASRec — same framework, same loss, same protocol, same
+budget, the most "controlled" comparison available here — BERT4Rec wins cleanly on both
+metrics, which would reproduce the original BERT4Rec paper's direction. Against this repo's
+from-scratch SASRec, the same BERT4Rec run is merely tied. Against the *same* RecBole SASRec
+with one hyperparameter changed, it loses on both. **Same BERT4Rec number, three different
+conclusions.**
+
+### The dropout asymmetry, tested
+
+RecBole's SASRec and BERT4Rec property files
+(`recbole/properties/model/{SASRec,BERT4Rec}.yaml`) are identical on every architectural
+default — `n_layers: 2`, `n_heads: 2`, `hidden_size: 64`, `inner_size: 256`,
+`loss_type: CE`. They differ on exactly one thing:
+
+```
+SASRec.yaml:   hidden_dropout_prob: 0.5    attn_dropout_prob: 0.5
+BERT4Rec.yaml: hidden_dropout_prob: 0.2    attn_dropout_prob: 0.2
+```
+
+That makes a dropout-only rerun a genuine single-variable experiment rather than an
+approximation of one, and it was run: `configs/recbole/ml1m_sasrec_dropout02.yaml`, an
+overlay on the shared base config, changing dropout and nothing else. Seed, split,
+negatives, budget, batch size, loss and hardware all held.
+
+| RecBole SASRec | HR@10 | NDCG@10 |
+|---|---|---|
+| dropout 0.5 (default) | 0.7768 | 0.5702 |
+| dropout 0.2 | 0.8056 | 0.6063 |
+| **effect of dropout alone** | **+3.71%** | **+6.33%** |
+
+Compare that against the margin it was supposed to explain — BERT4Rec's +3.39% / +5.86% win
+over the default-configured SASRec. **The dropout default alone more than accounts for the
+entire BERT4Rec advantage.** The hypothesis is confirmed, and with the asymmetry removed the
+same-framework comparison does not merely collapse to a tie, it reverses: SASRec is ahead by
++0.31% HR@10 / +0.45% NDCG@10, which is itself small enough to read as a tie.
+
+An incidental observation from the training curve: at dropout 0.2 the valid NDCG@10 was
+still climbing at epoch 189 (0.6394, a new best), whereas the run was cut at 200. The
+default-dropout run had plateaued. Whatever the budget curve in §6 eventually shows, the
+lower-dropout configuration is the one that had not finished improving.
 
 ### Why the two SASRecs differ, and why it matters
 
@@ -109,20 +158,21 @@ hyperparameters, and they are not matched across its own models:
 
 RecBole gives SASRec dropout 0.5 and BERT4Rec dropout 0.2 by default. On ML-1M — dense, 165
 actions/user — 0.5 is a lot of regularization; this repo's own ML-1M config uses 0.2 (0.5 is
-reserved for sparse Beauty), and it scores 4–5% higher than RecBole's SASRec.
+reserved for sparse Beauty), and it scores 4–5% higher than RecBole's default SASRec.
 
-**Hypothesis, not a demonstrated cause:** the dropout asymmetry is the single most likely
-driver of the gap, and therefore of the flipped conclusion. It is *not* tested here — no
-ablation isolating dropout was run. The experiment that would settle it is cheap and
-specific: rerun RecBole SASRec with `hidden_dropout_prob: 0.2` / `attn_dropout_prob: 0.2`
-and see whether the same-framework comparison collapses back to a tie.
+**Demonstrated cause, as of the dropout-0.2 rerun above.** This is a small, concrete
+instance of exactly the failure mode the reproducibility literature describes — an apparent
+architectural win that is entirely a baseline-configuration artifact, arrived at
+accidentally by taking a framework's defaults at face value. **This repo did the same
+thing**: `configs/recbole/ml1m_base.yaml` deliberately matched the *protocol* across models
+(split, negatives, maxlen, budget) and never checked that the *model* hyperparameters were
+comparable. The defaults were not adversarial or unusual — they are what anyone running
+RecBole out of the box gets, which is the point.
 
-If it does, this is a small, concrete instance of exactly the failure mode the
-reproducibility literature describes — an apparent architectural win that is partly a
-baseline-configuration artifact, arrived at accidentally by taking a framework's defaults at
-face value. **This repo did the same thing**: `configs/recbole/ml1m_base.yaml` deliberately
-matched the *protocol* across models (split, negatives, maxlen, budget) and never checked
-that the *model* hyperparameters were comparable.
+One process change came out of this: `src/recbole_run.py` now logs the hyperparameters that
+actually vary (dropout, width, heads, loss, batch size) to MLflow. Two runs that differ only
+by an *unlogged* framework default are indistinguishable in the master table, which is how
+the asymmetry survived a week of analysis.
 
 ### Cost
 
@@ -138,14 +188,33 @@ where hardware and batch size *are* matched, BERT4Rec costs 104.1 s/epoch agains
 These are the reasons the result above is a single honest data point rather than a
 resolution of the controversy.
 
-**The negative sets are not literally identical.** The repo's central methodological
-commitment is one frozen `negatives.json` (seed=42) shared by every model. RecBole's
-evaluator does not consume it — `eval_args.mode: uni100` makes RecBole draw its own 1+100
-uniform negatives. The protocol is therefore identical in *shape* (same split, same k, same
-sampling distribution, same exclusion rule) but not the same *draw*. The plan's fallback for
-this — export RecBole's raw prediction scores and rescore them through this repo's own
-evaluator — was not implemented. Given that ~1.6pp separates the models, this is not a
-negligible caveat.
+**The negative sets are not literally identical, and it demonstrably matters.** The repo's
+central methodological commitment is one frozen `negatives.json` (seed=42) shared by every
+model. RecBole's evaluator does not consume it — `eval_args.mode: uni100` makes RecBole draw
+its own 1+100 uniform negatives. The protocol is therefore identical in *shape* (same split,
+same k, same sampling distribution, same exclusion rule) but not the same *draw*.
+
+The fallback is now implemented — `src/recbole_run.export_scores` dumps the test-set score
+matrix and `scripts/rescore_recbole.py` rescores it offline against the frozen negatives —
+and it puts a number on the caveat. On **identical predictions** from the dropout-0.2 run:
+
+| Scoring of the same predictions | HR@10 | NDCG@10 |
+|---|---|---|
+| RecBole's own uni100 draw | 0.8056 | 0.6063 |
+| This repo's frozen `negatives.json` | 0.8240 | 0.6389 |
+| difference from the negative draw alone | +2.28% | +5.38% |
+
+That is the same order of magnitude as every margin discussed in this document. Cross-model
+comparisons here are therefore made on uni100 numbers throughout, because all four runs have
+them; the frozen-negative numbers are reported separately (master table row
+`sasrec_recbole_1x_dropout02_ourprotocol`) and are **not** differenced against another run's
+uni100 figure.
+
+**The other two RecBole runs cannot be rescored.** `export_scores` did not exist when
+`sasrec_recbole_1x` and `bert4rec_recbole_1x` ran, their sandboxes were ephemeral and are
+deleted, and no checkpoint was ever pushed. Their predictions are gone permanently; only the
+scalar uni100 metrics survive. Closing the negative-draw and full-ranking gaps for those two
+means retraining them (~10.5 GPU-hours combined).
 
 **The cross-framework comparison confounds loss with framework.** RecBole runs both its
 models with `loss_type: CE` (full softmax, `train_neg_sample_args: ~`), while this repo's
@@ -156,20 +225,45 @@ introduces the dropout asymmetry described in §3 instead. **Neither of the two 
 is clean**; they are confounded in different directions, which is precisely why they
 disagree.
 
-**The M4 cross-validation failed, and that failure is itself uninterpretable as stated.**
-EXECUTION_PLAN.md's M4 criterion was "RecBole SASRec within 2% of this repo's SASRec" as
-third-party evidence of implementation correctness. Measured: **−5.16% HR@10, −4.14%
-NDCG@10** — comfortably outside the band. But the criterion assumed the two runs would
-differ only by implementation, and they do not: they differ in dropout (0.2 vs 0.5), hidden
-size (50 vs 64), heads (1 vs 2), loss (BCE+1neg vs CE), and batch size (128 vs 2048). A gap
-of that size between two *differently configured* models is unremarkable and is not evidence
-of a bug in this repo's SASRec.
+**The M4 cross-validation now passes — on the dropout-matched run.** EXECUTION_PLAN.md's M4
+criterion was "RecBole SASRec within 2% of this repo's SASRec" as third-party evidence of
+implementation correctness. Against RecBole's *default* SASRec it measured −5.15% HR@10 /
+−4.14% NDCG@10, comfortably outside the band, but that comparison was uninterpretable: the
+two runs differ in dropout (0.2 vs 0.5), hidden size (50 vs 64), heads (1 vs 2), loss
+(BCE+1neg vs CE) and batch size (128 vs 2048), so the number measured configuration rather
+than correctness.
 
-It is also not evidence of *correctness*. The check that would actually test the
-implementation is to run RecBole's SASRec with **this repo's** hyperparameters (d=50, 1
-head, dropout 0.2) and compare like with like. That has not been run, so the third-party
-verification of this repo's SASRec remains outstanding — the milestone is unmet, not passed
-by reinterpretation.
+With dropout matched, the criterion must be evaluated on the *same* negative draw — the
+frozen `negatives.json`, for both sides. Anything else mixes the two draws quantified above
+and measures the sampling, not the implementations:
+
+| RecBole SASRec (dropout 0.2) vs. this repo's SASRec | HR@10 | NDCG@10 |
+|---|---|---|
+| both on frozen `negatives.json` (**the valid comparison**) | **+0.61%** ✅ | **+7.41%** ❌ |
+| *mixed draws (RecBole uni100 vs. frozen) — do not use* | *−1.64%* | *+1.93%* |
+
+**M4's criterion is met on HR@10 and missed on NDCG@10.** The mixed-draw row is recorded
+only because it is the comparison one gets by reading the two runs' headline numbers
+straight out of the master table, and it happens to fall inside ±2% on both metrics — a
+false pass. It is the exact error this section warns about one paragraph earlier, and it is
+easy to make.
+
+The split verdict is more informative than either number alone. HR@10 only asks whether the
+true item landed in the top 10; NDCG@10 asks *where*. The two implementations put the true
+item in the top 10 at essentially the same rate (+0.61%), while RecBole's ranks it
+distinctly higher within that window (+7.41%). That is the same direction, and the same
+suspected cause, as the full-ranking divergence documented below: cross-entropy over the
+full catalog produces sharper ordering than BCE against one sampled negative, and the effect
+grows as the metric becomes more sensitive to position — invisible to HR, visible in NDCG,
+large in full ranking.
+
+So the third-party evidence is partial: consistent with a correct implementation on the
+coarsest metric, and showing a real, systematic, and plausibly loss-driven difference on the
+finer ones. Note also that this is not the fully-matched run originally described as
+necessary — hidden size, heads, loss and batch size still differ.
+
+The same result relocates the earlier failure. The −5.15% / −4.14% figure was never about
+this repo's implementation; it was a dropout measurement wearing a correctness label.
 
 **Only one budget point exists, so the budget claim is untested.** The sweep was built to
 train once to 2000 epochs and recover 1x/4x/10x milestones from that single trajectory
@@ -190,13 +284,37 @@ repo's SASRec rather than to match the original release. That BERT4Rec is alread
 competitive at this repo's "1x" therefore says nothing about whether the *original* default
 was undertrained. C1 is not weakly supported or contradicted here; it is simply not tested.
 
-**No full-ranking numbers for either RecBole run.** The RecBole evaluation was uni100-only,
-so `full_HR@10` / `full_NDCG@10` are blank for both `sasrec_recbole_1x` and
-`bert4rec_recbole_1x` in the master table. Since
-this project's own methodology section argues at length that sampled metrics inflate results
-(Krichene & Rendle, 2020), the headline comparison resting entirely on the sampled protocol
-is a real weakness — the sampled protocol is exactly the one this repo elsewhere warns
-against trusting alone.
+**Full-ranking numbers exist for one RecBole run only — and they disagree with the sampled
+verdict.** `full_HR@10` / `full_NDCG@10` are still blank for `sasrec_recbole_1x` and
+`bert4rec_recbole_1x` (their predictions are gone, see above). The dropout-0.2 run has them,
+via offline rescoring, and they are worth pausing on:
+
+| SASRec, ML-1M, test, k=10 | sampled HR@10 | sampled NDCG@10 | full HR@10 | full NDCG@10 |
+|---|---|---|---|---|
+| this repo (BCE + 1 sampled negative) | 0.8190 | 0.5948 | 0.2475 | 0.1322 |
+| RecBole, dropout 0.2 (CE over full catalog) | 0.8240 | 0.6389 | **0.3467** | **0.2029** |
+| relative difference | +0.61% | +7.41% | **+40.1%** | **+53.5%** |
+
+All four sampled figures are on the frozen `negatives.json`, so the row is directly
+comparable throughout.
+
+The divergence grows monotonically with how much the metric cares about position: +0.61% on
+sampled HR, +7.41% on sampled NDCG, +40% on full HR, +53% on full NDCG. The most likely
+explanation is the training
+objective, which the sampled protocol is largely blind to: RecBole trains with cross-entropy
+over the entire catalog, which is close to a direct optimization of full-ranking, while this
+repo follows the original SASRec recipe of BCE against one sampled negative per position.
+Ranking against 100 random negatives barely distinguishes the two; ranking against 3,416
+items does.
+
+This is unverified — no ablation swapping only the loss was run — but it is a concrete
+warning about the M4 criterion above. **"Within 2%" is a statement about one metric under
+one protocol, not about the models.** Two implementations can agree almost exactly on the
+protocol this repo elsewhere warns against trusting (Krichene & Rendle, 2020) while
+differing by 40–50% on the one it recommends. The cross-model BERT4Rec comparisons in §3 all
+rest on the sampled protocol, and this row is a reason to hold them loosely: nothing here
+establishes that the §3 ordering would survive full-ranking evaluation, and the one case
+where both protocols are available shows them disagreeing by a wide margin.
 
 ---
 
@@ -205,9 +323,9 @@ against trusting alone.
 | # | Claim | Verdict from this repo's data |
 |---|---|---|
 | C1 | Default BERT4Rec config is severely undertrained | **Not tested.** The "1x" run is RecBole+CE at 200 epochs, not the original release configuration. |
-| C2 | Adequately trained, BERT4Rec is competitive with SASRec | **Supported at one budget point.** BERT4Rec is at minimum competitive (tie vs. this repo's SASRec) and beats RecBole's own SASRec on both metrics. But "adequately trained" is untested as a *variable* — there is no budget curve. |
-| C3 | Downstream BERT4Rec baseline numbers are unreliable | **Out of scope as a survey claim — but see below.** This project accidentally produced one instance of the underlying mechanism. |
-| C4 | Ranking is driven by budget and objective, not architecture | **Not answered, but sharpened.** Budget is untested. What the data *does* show is that the ranking flips with baseline *configuration* — the same BERT4Rec run wins or ties depending only on which SASRec it is measured against. |
+| C2 | Adequately trained, BERT4Rec is competitive with SASRec | **Supported at one budget point, weakened by the dropout result.** BERT4Rec is competitive — it ties this repo's SASRec and loses narrowly to a dropout-matched RecBole SASRec. Its apparent *win* over RecBole's SASRec was a configuration artifact. "Adequately trained" remains untested as a *variable*: there is no budget curve. |
+| C3 | Downstream BERT4Rec baseline numbers are unreliable | **Out of scope as a survey claim — but demonstrated first-hand.** This project produced, and then diagnosed, one instance of the underlying mechanism. |
+| C4 | Ranking is driven by budget and objective, not architecture | **Partially answered, in the claim's favour.** Budget is still untested. But the ranking is now shown to flip on a *non-architectural* variable: one dropout default, worth more than the entire architectural margin. The suspected loss effect on full ranking (§4) points the same way. Architecture alone does not determine the ordering. |
 
 **The clearest thing in this data is not about either architecture.** It is that a
 protocol-controlled comparison is not the same as a *fair* comparison. Every knob this
@@ -221,26 +339,45 @@ SASRec results are only as trustworthy as the SASRec they were measured against,
 version of the headline is:
 
 > Under a matched protocol on ML-1M at 200 epochs, BERT4Rec beats RecBole's default-
-> configured SASRec on both metrics, and ties a paper-configured SASRec. The gap is
-> plausibly a dropout artifact, and that hypothesis is untested.
+> configured SASRec by +3.39% HR@10 / +5.86% NDCG@10. Changing one line of that SASRec's
+> configuration — dropout 0.5 → 0.2, the value RecBole already uses for BERT4Rec — is worth
+> +3.71% / +6.33%, and the ordering reverses. BERT4Rec's advantage on this dataset, at this
+> budget, under this protocol, is a baseline-configuration artifact.
+
+Two limits on that sentence, both from §4. It rests on the sampled protocol, and the one run
+with both protocols shows them diverging by 40–50%; and every number is a single seed, with
+margins well inside plausible seed noise. The dropout effect is large enough to survive both
+concerns. The residual SASRec-over-BERT4Rec margin (+0.31% / +0.45%) is not — that is a tie.
 
 ---
 
 ## 6. What would close the gaps
 
-In cost order, cheapest first:
+~~RecBole SASRec at dropout 0.2~~ — **done** (2026-08-09), §3. ~~Rescore RecBole predictions
+through this repo's evaluator~~ — **done** for that run, §4; impossible for the other two,
+whose predictions no longer exist.
 
-0. **RecBole SASRec at 200 epochs with dropout 0.2** (~4.7 GPU-hours, ~$10). Now the single
-   highest-value run available: it tests §3's dropout hypothesis, and it is simultaneously
-   the like-for-like M4 cross-validation that the completed run was not. If the
-   same-framework gap collapses, the flipped conclusion is explained; if it survives, the
-   architecture claim gets much stronger. Either outcome is publishable.
-2. **Rescore RecBole predictions through this repo's evaluator** using the frozen
-   `negatives.json`. Pure CPU work; removes the negative-set caveat entirely and would also
-   yield the missing full-ranking numbers.
-3. **One 4x point (800 epochs) per model** (~23 GPU-hours for BERT4Rec). Turns C2's single
-   point into an actual budget curve and produces `training_budget.png`. The full 10x point
-   is likely not worth its ~58 GPU-hours unless the 4x point shows the curve still climbing.
+Remaining, in cost order, cheapest first:
+
+1. **A seed-variance study** (~14 GPU-hours for 3 extra seeds on the two dropout-0.2 runs).
+   The cheapest thing that would change how much any margin here can be trusted. Every
+   number in this document is seed 42, and the residual SASRec-vs-BERT4Rec margin
+   (+0.31% / +0.45%) is almost certainly inside seed noise. The dropout effect (+3.71% /
+   +6.33%) is large enough that it probably is not, but that is an assumption.
+2. **A loss ablation: RecBole SASRec at dropout 0.2 with BCE + 1 sampled negative**
+   (~4.7 GPU-hours). Tests §4's explanation for the 40–53% full-ranking divergence, which is
+   currently the largest unexplained effect in the project and the one that most undermines
+   confidence in the sampled-protocol comparisons.
+3. **Retrain the other two RecBole runs with score export** (~10.5 GPU-hours). Gives
+   `bert4rec_recbole_1x` and `sasrec_recbole_1x` frozen-negative and full-ranking numbers, so
+   the §3 comparison table can be repeated on the full-ranking protocol rather than resting
+   on the sampled one.
+4. **One 4x point (800 epochs) per model** (~23 GPU-hours for BERT4Rec). Turns C2's single
+   point into an actual budget curve and produces `training_budget.png`, M4's signature
+   figure and the last of its acceptance criteria still outstanding. Worth noting that the
+   dropout-0.2 SASRec had *not* plateaued at 200 epochs (§3), so the curve is unlikely to be
+   flat. The full 10x point is likely not worth its ~58 GPU-hours unless 4x is still
+   climbing.
 
 ---
 
