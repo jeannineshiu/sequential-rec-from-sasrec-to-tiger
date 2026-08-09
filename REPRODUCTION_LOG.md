@@ -304,20 +304,61 @@ about the bottleneck and the fix still didn't move the number.
   104 s/epoch the full 2000-epoch run is ~58 GPU-hours *per model*. Cut to the 1x point on
   cost. There is therefore no `training_budget.png` and no budget curve — the scaling claim
   at the centre of the controversy is untested here, not answered.
-- **The RecBole-SASRec cross-validation was never launched.** The only SASRec sandbox run was
-  a 20-epoch detached smoke test, whose results db came back with 0 MLflow runs and was
-  discarded as a throwaway (`75d5ca5`). So M4's `<2%` cross-check has no data, and the
-  framework/loss confound in the comparison above is uncontrolled.
-- **No full-ranking metrics for BERT4Rec** — RecBole eval was uni100-only, so those cells are
-  blank in `results/tables/master.md`.
+- **No full-ranking metrics for either RecBole run** — RecBole eval was uni100-only, so those
+  cells are blank in `results/tables/master.md`.
 
-**M4 not met.** Two of three Week 4 acceptance criteria (signature training-budget figure,
-RecBole SASRec within 2%) are outstanding; the third (controversy analysis document) is done.
-Cheapest path to closing the gap, in cost order: RecBole SASRec at 200 epochs (~5 GPU-hours
-/ ~$12 — SASRec is the smaller model but the bottleneck is model-independent CPU-side
-sequence augmentation, so it does not come in far under BERT4Rec's 5.8 h; buys both the
-cross-check and the same-framework comparison) → rescore RecBole predictions
-through this repo's evaluator (CPU-only; removes the negative-draw caveat and yields the
-missing full-ranking numbers) → one 4x point per model (~23 GPU-hours) for an actual curve.
+---
+
+## Week 4 (cont.) — the RecBole SASRec run, lost and re-run
+
+**2026-08-08 → 2026-08-09**
+
+- **First attempt: trained fine, results destroyed.** 200 epochs completed (~4.7 GPU-hours),
+  then the push back to GitHub failed on an expired PAT and the runner's unconditional
+  self-delete removed the sandbox — results db and log with it. Root cause and the five
+  process fixes are in the (gitignored) notes vault as
+  `20260808-daytona-sasrec-結果全損事故-postmortem.md`; the code fixes are commit `40ad41f`
+  (pre-flight credential validation on both sides, push retries, `PUSH_OK`-gated self-stop,
+  and `scripts/daytona_recover.py`).
+- **Second attempt reproduced the first exactly.** With `seed=42`, epoch 19 came back at
+  train loss 2721.4938 vs. the lost run's 2721.4937 and identical valid HR/NDCG. Worth
+  recording as an unplanned determinism check: the RecBole path is reproducible across
+  sandboxes, so the loss cost money and time but no information.
+
+**Result — RecBole SASRec, 200 epochs, ML-1M, sampled protocol:** test HR@10 **0.7768**,
+NDCG@10 **0.5702** (valid 0.8101 / 0.6009), 84.2 s/epoch. MLflow run `sasrec_recbole_1x`,
+merged into `mlflow.db` via the new `scripts/merge_daytona_results.py` so the master table
+stays script-generated rather than hand-edited.
+
+**This did not do what it was supposed to do, and did something more interesting instead.**
+
+- **M4's `<2%` criterion failed**: −5.16% HR@10, −4.14% NDCG@10 against this repo's SASRec.
+  But the criterion assumed the two runs differ only by implementation. They do not — RecBole
+  defaults are d=64, 2 heads, dropout 0.5, CE loss, batch 2048, against this repo's d=50,
+  1 head, dropout 0.2, BCE+1neg, batch 128. The number measures configuration, not
+  correctness, so it neither convicts nor exonerates the implementation. The real
+  cross-validation (RecBole SASRec with *this repo's* hyperparameters) is still unrun.
+- **The same-framework comparison inverts the headline.** Against RecBole's own SASRec,
+  BERT4Rec wins both metrics (+3.39% HR@10, +5.86% NDCG@10); against this repo's SASRec the
+  same BERT4Rec run merely ties. Same BERT4Rec number, opposite conclusion, and the only
+  thing that changed is the baseline.
+- **The likely mechanism, untested:** RecBole ships `hidden_dropout_prob: 0.5` for SASRec and
+  `0.2` for BERT4Rec. On dense ML-1M that is a real handicap — this repo's own ML-1M config
+  uses 0.2 and reserves 0.5 for sparse Beauty. Flagging as a hypothesis: no dropout ablation
+  was run, and the settling experiment is one ~4.7 GPU-hour rerun at dropout 0.2.
+- **The methodological lesson, which is the actual Week 4 finding:** this project spent its
+  whole design effort matching the *evaluation* protocol across models and never checked that
+  the *model* hyperparameters were comparable. `configs/recbole/ml1m_base.yaml` sets split,
+  negatives, maxlen, budget and metrics identically, then silently inherits per-model
+  defaults that are not symmetric. A protocol-controlled comparison is not automatically a
+  fair one — which is precisely the failure mode the BERT4Rec reproducibility literature
+  describes, reproduced here by accident.
+
+**M4 still not met.** The signature training-budget figure and a like-for-like
+cross-validation are both outstanding. Cheapest path, in cost order: RecBole SASRec at
+dropout 0.2 (~4.7 GPU-hours / ~$10 — tests the hypothesis *and* serves as the real
+cross-check) → rescore RecBole predictions through this repo's evaluator (CPU-only; removes
+the negative-draw caveat and yields the missing full-ranking numbers) → one 4x point per
+model (~23 GPU-hours) for an actual budget curve.
 
 ---

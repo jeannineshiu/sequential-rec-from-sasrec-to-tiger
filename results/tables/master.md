@@ -14,3 +14,4 @@ Generated from MLflow (`sqlite:///mlflow.db`, experiment `sequential-rec`) via `
 | popularity_ml1m                      | ml-1m         |          |                |                |             nan      |         nan      |          0.4363 |            0.2401 |       0.0369 |         0.0180 |
 | sasrec_beauty                        | amazon-beauty |       50 |                |                |             nan      |         nan      |          0.5097 |            0.3453 |       0.0594 |         0.0303 |
 | sasrec_ml1m                          | ml-1m         |      200 |                |                |             nan      |         nan      |          0.8190 |            0.5948 |       0.2475 |         0.1322 |
+| sasrec_recbole_1x                    | ml-1m         |          |                |                |              84.2353 |         200.0000 |          0.7768 |            0.5702 |     nan      |       nan      |
