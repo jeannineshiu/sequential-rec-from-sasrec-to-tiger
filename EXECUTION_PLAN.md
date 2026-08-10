@@ -191,9 +191,9 @@ flowchart LR
 ### Week 6 — 對比實驗 + 包裝發布
 
 #### Day 1–3:核心對比(約 6h)
-- [ ] **主實驗:** SASRec (atomic) vs TIGER-style (semantic),Amazon Beauty,full ranking Recall@10 / NDCG@10;TIGER 參考 Recall@10 ~0.0648(±15% 內即可)
-- [ ] **Cold-start 分桶(招牌之二):** `src/eval/cold_start.py` — test items 按訓練頻次分 head / torso / tail / unseen 四桶,分桶報兩模型指標 → 對照長條圖
-- [ ] 預期管理:overall 可能持平或略輸 — 量化結論本身就是貢獻,照實報
+- [x] **主實驗:** SASRec (atomic) vs GenRec (semantic),Beauty,full ranking — GenRec 0.0329 vs SASRec 0.0594(−44.6%);未達 TIGER 參考 0.0648,差異與限制照實記錄
+- [x] **Cold-start 分桶(招牌之二):** `src/eval/cold_start.py` + `results/figures/cold_start_buckets.png` — **假說反向失敗**:越稀有差距越大(tail −88.2%)
+- [x] 預期管理:實際是大輸,並診斷出機制(推薦多樣性塌縮:7% vs 76% catalogue coverage)
 
 #### Day 4–5:Serving demo + README(約 4h)
 - [ ] `serving/app.py`:FastAPI — 輸入互動序列 → top-10 推薦,附 semantic ID 解碼展示

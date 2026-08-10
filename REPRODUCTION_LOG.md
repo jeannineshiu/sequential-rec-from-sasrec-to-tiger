@@ -824,3 +824,99 @@ tail win), and per-level decode accuracy to test the error-compounding explanati
 
 ---
 
+## Week 6 — the cold-start experiment answers the wrong way
+
+**2026-08-10**
+
+The hypothesis this project was built to test: semantic IDs should help exactly where atomic
+IDs are weakest. An item seen twice in training has an embedding shaped by two gradient
+updates; an item never seen in training has an embedding still at its initialization. Its
+*semantic* ID, by contrast, is made of codes thousands of other items share, so a generative
+model ought to reach it from content alone. Prediction: GenRec loses on the head and closes
+the gap — or wins — on the tail.
+
+Both models scored in one pass, same users, same order (asserted), so no cross-run
+summarisation is involved. Buckets are by the target item's frequency in the *training* split.
+
+| bucket | users | SASRec HR@10 | GenRec HR@10 | relative |
+|---|---|---|---|---|
+| unseen (0) | 138 | 0.0000 | 0.0000 | — |
+| tail (1–4) | 4,594 | 0.0185 | 0.0022 | **−88.2%** |
+| torso (5–19) | 9,539 | 0.0427 | 0.0085 | **−80.1%** |
+| head (20+) | 8,092 | 0.1033 | 0.0797 | −22.8% |
+| overall | 22,363 | 0.0594 | 0.0329 | −44.6% |
+
+**The gap widens monotonically as items get rarer — the exact opposite of the prediction.**
+Semantic IDs are worst precisely where they were supposed to help.
+
+Checked the obvious confound first, since beam search would plausibly drop low-probability
+(rare) items before high-probability ones: re-ran every bucket at beam 200 instead of 20. Tail
+went −88.2% → −89.4%, torso −80.1% → −83.8%. A 10x wider beam does not rescue the tail; if
+anything it sharpens the effect. The finding is not a decoding artifact.
+
+The `unseen` bucket is honestly uninformative: 138 users, both models at zero. SASRec's zero is
+structural (untrained embedding). GenRec's zero is consistent with any true rate below ~2.2%
+(rule of three), so it neither confirms nor refutes the content-generalisation claim. It is
+reported as measured and not spun.
+
+### Why: the model recommends 839 items out of 12,101
+
+| model | distinct items across all top-10s | median train freq | % head | % torso | % tail |
+|---|---|---|---|---|---|
+| SASRec (atomic) | **9,221** | 22 | 54.2% | 42.1% | 3.7% |
+| GenRec (semantic) | **839** | 84 | 84.7% | 13.1% | 2.2% |
+
+GenRec's entire recommendation output covers **7% of the catalogue**, against SASRec's 76%.
+Generation has collapsed onto a small set of high-probability code sequences, and the median
+recommended item is nearly 4x more popular. The tail result is a symptom of that collapse.
+
+This is a known property of MAP-style decoding rather than something specific to semantic IDs:
+the model ranks by P(item | history), which contains the popularity prior, while SASRec's dot
+product is unnormalized and carries no such prior. That asymmetry is arguably the more
+important finding here — swapping atomic IDs for semantic IDs also silently swaps an
+unnormalized scorer for a normalized one, and the second change is doing much of the damage.
+Nobody sets out to change the objective's relationship to popularity; it arrives with the
+architecture, exactly like Week 4's dropout arrived with the framework.
+
+### Per-level accuracy: compounding is real but not the main story
+
+Teacher-forced on the true prefix, so each level is measured independently of the previous
+level's mistakes:
+
+| level | argmax accuracy | codebook |
+|---|---|---|
+| 1 | 0.0976 | 256 |
+| 2 | 0.1788 | 256 |
+| 3 | 0.2243 | 256 |
+| 4 | 0.8627 | 12 |
+
+Accuracy *rises* with depth, because conditioning on the true prefix narrows the choice — the
+first code is both the hardest and the most consequential decision. Level 4, the
+content-free disambiguation token, is nearly free at 86%, so Beauty's 11.78% collision rate is
+not the bottleneck it looked like. The product (0.0034) is not the retrieval rate, since the
+levels are not independent, but it shows how little slack there is: four sequential decisions
+where the first is right 10% of the time.
+
+### Where this leaves the project
+
+The headline is a negative result, and it is a real one rather than a broken implementation:
+beam saturation, per-level accuracy, and the coverage collapse all point the same way, and the
+sampled-protocol numbers (which involve no beam at all) agree.
+
+The honest summary is three claims, in decreasing order of confidence:
+
+1. On Beauty, a semantic-ID generative recommender underperforms an atomic-ID SASRec at
+   matched backbone, protocol, and training budget — by 29% sampled HR@10, 45% full HR@10.
+2. It underperforms *most* on rare items, which contradicts the cold-start motivation.
+3. The mechanism is a collapse in recommendation diversity (7% catalogue coverage vs 76%),
+   which is at least partly attributable to ranking by a normalized probability rather than by
+   an unnormalized score — a change that rides along with the architecture and is not the part
+   anyone intends to test.
+
+Not tested, and the obvious next experiments: GenRec at matched *parameter count* rather than
+matched hidden dim; popularity-debiased decoding (dividing by an item prior) to separate the
+scorer change from the representation change; and whether ML-1M, with 3.5x fewer items and far
+longer sequences, shows the same shape.
+
+---
+

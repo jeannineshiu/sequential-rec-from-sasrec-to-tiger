@@ -55,7 +55,7 @@ def make_sampled_score_fn(
     return score_fn
 
 
-def evaluate_generative_full_ranking(
+def generative_full_ranking_ranks(
     model: GenRec,
     vocab: SemanticIdVocab,
     train: dict[int, list[int]],
@@ -67,8 +67,8 @@ def evaluate_generative_full_ranking(
     k: int = 10,
     beam_size: int = 20,
     batch_size: int = 128,
-) -> dict[str, float]:
-    """Beam-search top-K against the whole catalogue.
+) -> tuple[list[int], np.ndarray]:
+    """Beam-search top-K against the whole catalogue, returning per-user ranks.
 
     Already-seen items are dropped from the returned list *after* decoding
     (the model is free to generate them), which matches how the dot-product
@@ -106,6 +106,35 @@ def evaluate_generative_full_ranking(
             if rank >= k:
                 break
 
+    return users, ranks
+
+
+def evaluate_generative_full_ranking(
+    model: GenRec,
+    vocab: SemanticIdVocab,
+    train: dict[int, list[int]],
+    targets: dict[int, int],
+    maxlen_items: int,
+    device: torch.device,
+    extra_history: dict[int, list[int]] | None = None,
+    exclude_extra: dict[int, list[int]] | None = None,
+    k: int = 10,
+    beam_size: int = 20,
+    batch_size: int = 128,
+) -> dict[str, float]:
+    _, ranks = generative_full_ranking_ranks(
+        model,
+        vocab,
+        train,
+        targets,
+        maxlen_items=maxlen_items,
+        device=device,
+        extra_history=extra_history,
+        exclude_extra=exclude_extra,
+        k=k,
+        beam_size=beam_size,
+        batch_size=batch_size,
+    )
     metrics = summarize(ranks, k=k)
     metrics["beam_size"] = float(beam_size)
     return metrics

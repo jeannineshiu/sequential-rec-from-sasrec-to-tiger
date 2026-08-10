@@ -10,7 +10,7 @@ Execution checklist: [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md)
 Debugging trail: [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md)
 BERT4Rec controversy analysis: [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md)
 
-## Status: Week 3 done (M3 met) — Week 4 mostly done (M4 partially met) — Week 5 done (generative model trained; it loses to SASRec on Beauty)
+## Status: Weeks 1–5 done — Week 6 main experiment done (the cold-start hypothesis fails, in the direction it was supposed to win)
 
 Week 4 ran four protocol-matched models at 200 epochs on ML-1M. The finding is not about
 either architecture: **BERT4Rec's win over SASRec on this dataset is a baseline-configuration
@@ -115,8 +115,51 @@ Unconstrained greedy decoding is legal 81.8% of the time after training (32.8% a
 epochs), so constrained decoding is doing real work — without the Trie, nearly one in five of
 the model's first-choice recommendations would not be an item that exists.
 
-Cold-start bucketing — where semantic IDs are supposed to pay off, and where an overall loss
-does not preclude a tail win — is Week 6.
+### Cold-start bucketing: the hypothesis fails in the direction it was supposed to win
+
+Semantic IDs are supposed to help where atomic IDs are weakest — a rarely-seen item has a
+barely-trained embedding, but its semantic ID is built from codes thousands of other items
+share. Prediction: GenRec loses on the head and closes the gap on the tail.
+
+![cold-start buckets](results/figures/cold_start_buckets.png)
+
+| bucket (target's train frequency) | users | SASRec HR@10 | GenRec HR@10 | relative |
+|---|---|---|---|---|
+| unseen (0) | 138 | 0.0000 | 0.0000 | — |
+| tail (1–4) | 4,594 | 0.0185 | 0.0022 | **−88.2%** |
+| torso (5–19) | 9,539 | 0.0427 | 0.0085 | **−80.1%** |
+| head (20+) | 8,092 | 0.1033 | 0.0797 | −22.8% |
+| overall | 22,363 | 0.0594 | 0.0329 | −44.6% |
+
+**The gap widens monotonically as items get rarer — the opposite of the prediction.** Re-running
+every bucket at beam 200 instead of 20 makes it slightly worse, not better (tail −89.4%), so it
+is not a decoding artifact. The `unseen` bucket is uninformative: 138 users, both models at
+zero; GenRec's zero is consistent with any true rate below ~2.2%.
+
+### Why: recommendation diversity collapses
+
+| model | distinct items across all top-10s | median train freq | % head | % torso | % tail |
+|---|---|---|---|---|---|
+| SASRec (atomic) | **9,221** (76% of catalogue) | 22 | 54.2% | 42.1% | 3.7% |
+| GenRec (semantic) | **839** (7%) | 84 | 84.7% | 13.1% | 2.2% |
+
+GenRec's entire output covers 7% of the catalogue. Generation collapsed onto a small set of
+high-probability code sequences, and the tail result is a symptom of that.
+
+The likely mechanism is not really about semantic IDs: GenRec ranks by P(item | history),
+which contains the popularity prior, while SASRec's dot product is unnormalized and carries no
+such prior. Swapping atomic for semantic IDs also silently swaps an unnormalized scorer for a
+normalized one — and that second change, which nobody set out to make, is doing much of the
+damage. It arrived with the architecture the same way Week 4's dropout arrived with the
+framework.
+
+Per-level code accuracy (teacher-forced on the true prefix) is 9.8% / 17.9% / 22.4% / 86.3%
+across the four levels. Accuracy *rises* with depth as the prefix narrows the choice, and the
+content-free disambiguation token is nearly free — so Beauty's 11.78% collision rate is not
+the bottleneck it appeared to be. The binding constraint is the first code.
+
+Reproduce: `uv run python -m scripts.compare_atomic_vs_semantic` and
+`uv run python -m scripts.diagnose_genrec`.
 
 ### Ablations (ML-1M, test set, k=10 — **all rows at 100 epochs**, see REPRODUCTION_LOG.md)
 

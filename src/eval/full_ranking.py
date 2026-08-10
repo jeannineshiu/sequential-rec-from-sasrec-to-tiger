@@ -12,7 +12,7 @@ from src.data.dataset import build_eval_input
 from src.eval.metrics import summarize
 
 
-def evaluate_full_ranking(
+def full_ranking_ranks(
     score_fn: Callable[[np.ndarray], np.ndarray],
     train: dict[int, list[int]],
     targets: dict[int, int],
@@ -20,10 +20,10 @@ def evaluate_full_ranking(
     maxlen: int,
     extra_history: dict[int, list[int]] | None = None,
     exclude_extra: dict[int, list[int]] | None = None,
-    k: int = 10,
     batch_size: int = 128,
-) -> dict[str, float]:
-    """
+) -> tuple[list[int], np.ndarray]:
+    """Per-user ranks, so callers can slice them (e.g. by item popularity bucket).
+
     score_fn(input_batch [B, maxlen]) -> scores [B, n_items + 1]
         (column index == item id; column 0 is the padding slot and ignored)
     extra_history: items to append to the input sequence before truncation
@@ -60,5 +60,28 @@ def evaluate_full_ranking(
         ranks = (scores > target_scores[:, None]).sum(axis=1)
         all_ranks.append(ranks)
 
-    ranks = np.concatenate(all_ranks)
+    return users, np.concatenate(all_ranks)
+
+
+def evaluate_full_ranking(
+    score_fn: Callable[[np.ndarray], np.ndarray],
+    train: dict[int, list[int]],
+    targets: dict[int, int],
+    n_items: int,
+    maxlen: int,
+    extra_history: dict[int, list[int]] | None = None,
+    exclude_extra: dict[int, list[int]] | None = None,
+    k: int = 10,
+    batch_size: int = 128,
+) -> dict[str, float]:
+    _, ranks = full_ranking_ranks(
+        score_fn,
+        train,
+        targets,
+        n_items=n_items,
+        maxlen=maxlen,
+        extra_history=extra_history,
+        exclude_extra=exclude_extra,
+        batch_size=batch_size,
+    )
     return summarize(ranks, k=k)
