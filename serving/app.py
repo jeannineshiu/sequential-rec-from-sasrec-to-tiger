@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 import yaml
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
