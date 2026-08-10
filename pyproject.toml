@@ -18,6 +18,8 @@ dependencies = [
     "recbole>=1.2.1",
     "py-spy>=0.4.2",
     "sentence-transformers>=5.7.0",
+    "fastapi>=0.139.2",
+    "uvicorn[standard]>=0.51.0",
 ]
 
 [project.optional-dependencies]
