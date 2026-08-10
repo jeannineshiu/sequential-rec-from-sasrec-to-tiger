@@ -751,3 +751,76 @@ cold-start bucket analysis.
 
 ---
 
+## Week 5 (cont.) — the first generative result, and it is a loss
+
+**2026-08-10**
+
+200-epoch config, early stopped at epoch 100 (patience 20), 37.7 s/epoch on laptop MPS.
+Same frozen `negatives.json`, same evaluator, same leave-one-out split as every SASRec row.
+
+| Amazon Beauty, test, k=10 | sampled HR | sampled NDCG | full HR | full NDCG |
+|---|---|---|---|---|
+| SASRec (atomic IDs, this repo) | **0.5097** | **0.3453** | **0.0594** | **0.0303** |
+| GenRec (semantic IDs, same backbone) | 0.3621 | 0.2235 | 0.0329 | 0.0168 |
+| relative | −28.96% | −35.27% | −44.6% | −44.6% |
+
+Nowhere near the seed-noise floor (0.96% sampled / 3.37% full), so this is signal, not
+variance. Reported as measured.
+
+### Ruling out the beam first
+
+Full ranking is the one number carrying an approximation the baselines do not have — an item
+the beam never reaches is a miss. Before differencing anything, that had to be bounded:
+
+| beam | full HR@10 | full NDCG@10 | sec |
+|---|---|---|---|
+| 10 | 0.0296 | 0.0157 | 13 |
+| 20 | **0.0329** | **0.0168** | 17 |
+| 50 | 0.0327 | 0.0168 | 38 |
+| 100 | 0.0328 | 0.0169 | 74 |
+| 200 | 0.0327 | 0.0168 | 143 |
+
+Flat from 20 to 200 — a 10x wider beam recovers nothing. Beam 10 is genuinely too narrow
+(seen-item filtering eats into the list), 20 is saturated. The gap to SASRec is not a decoding
+artifact. `scripts/beam_sensitivity.py` reproduces this.
+
+### The number that reframes the result
+
+| | SASRec | GenRec |
+|---|---|---|
+| item / token table | 774,528 | 50,048 |
+| everything else | 53,824 | 63,424 |
+| **total** | **828,352** | **113,472** |
+
+GenRec runs on **13.7% of the parameters**, because 12,101 item embeddings collapse into 782
+token embeddings — a 15.5x smaller table. So the honest statement is not "semantic IDs are
+28-45% worse". It is "semantic IDs lose 29% of sampled HR@10 and 45% of full HR@10 while
+using an eighth of the parameters", and the per-parameter comparison points the other way.
+
+This is also a confound the Week 6 headline has to name out loud, because it cannot be
+controlled away: matching parameter counts would mean either crippling SASRec's item table or
+inflating GenRec's hidden dimension, and neither is the method being tested. The compression
+*is* the method. Week 4's lesson applies in reverse here — the second variable is intrinsic,
+so it gets stated rather than eliminated.
+
+### Candidate explanations, none tested yet
+
+- **Beauty's 11.78% collision rate.** For ~1 item in 8, the only thing distinguishing it from
+  a catalogue neighbour is a disambiguation token carrying no content signal at all. The model
+  cannot learn to emit that token from content, only from co-occurrence.
+- **Capacity**, as above.
+- **Four sequential decisions instead of one.** An item is only retrieved if all four codes
+  are right; errors compound along the levels. Worth measuring per-level accuracy in Week 6.
+
+### Greedy legality: the Trie stays load-bearing
+
+Unconstrained greedy decoding was legal 32.8% of the time after 2 epochs and **81.8%** after
+100. So the model does learn the code manifold — but nearly 1 in 5 of its unconstrained
+first choices is still not an item. Constrained decoding is doing real work, not tidying up.
+
+**Next:** Week 6 — the atomic-vs-semantic comparison table, cold-start bucketing (where the
+semantic ID story is supposed to pay off, and where an overall loss does not preclude a
+tail win), and per-level decode accuracy to test the error-compounding explanation.
+
+---
+

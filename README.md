@@ -10,7 +10,7 @@ Execution checklist: [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md)
 Debugging trail: [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md)
 BERT4Rec controversy analysis: [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md)
 
-## Status: Week 3 done (M3 met) — Week 4 mostly done (M4 partially met) — Week 5 in progress (semantic IDs built)
+## Status: Week 3 done (M3 met) — Week 4 mostly done (M4 partially met) — Week 5 done (generative model trained; it loses to SASRec on Beauty)
 
 Week 4 ran four protocol-matched models at 200 epochs on ML-1M. The finding is not about
 either architecture: **BERT4Rec's win over SASRec on this dataset is a baseline-configuration
@@ -87,8 +87,36 @@ run — but it is the largest unexplained effect in the project.
 |---|---|---|---|
 | SASRec (paper reference, ~0.4854 ±2pp) | 0.4654–0.5054 | — | target |
 | **SASRec (this repo)** | **0.5097** | 0.3453 | ⚠️ +0.43pp over the accepted band (see REPRODUCTION_LOG.md — reporting as-is rather than tuning to fit) |
+| GenRec (semantic IDs, same backbone) | 0.3621 | 0.2235 | −28.96% / −35.27% — see below |
 
-TIGER-style comparison pending Week 6.
+### Amazon Beauty: atomic vs. semantic IDs (Week 5 result, full comparison in Week 6)
+
+Same backbone, same protocol, same frozen negatives; the only variable is whether an item is
+one embedding or a sequence of four semantic tokens.
+
+| test, k=10 | sampled HR@10 | sampled NDCG@10 | full HR@10 | full NDCG@10 | parameters |
+|---|---|---|---|---|---|
+| SASRec (atomic) | **0.5097** | **0.3453** | **0.0594** | **0.0303** | 828,352 |
+| GenRec (semantic) | 0.3621 | 0.2235 | 0.0329 | 0.0168 | **113,472** |
+| relative | −28.96% | −35.27% | −44.6% | −44.6% | **13.7%** |
+
+**The generative model loses, and it is not a decoding artifact** — widening the beam from 20
+to 200 moves full HR@10 by 0.0002 (`uv run python -m scripts.beam_sensitivity`), and every
+margin is far outside the seed-noise floor.
+
+The parameter column is what makes this interesting rather than just negative. 12,101 item
+embeddings collapse into 782 token embeddings — a 15.5x smaller table — so GenRec gives up
+29% of sampled HR@10 while running on an eighth of the parameters. That capacity gap cannot be
+controlled away: matching parameter counts would mean crippling SASRec's item table or
+inflating GenRec's hidden dimension, and the compression *is* the method under test. It gets
+stated rather than eliminated.
+
+Unconstrained greedy decoding is legal 81.8% of the time after training (32.8% after two
+epochs), so constrained decoding is doing real work — without the Trie, nearly one in five of
+the model's first-choice recommendations would not be an item that exists.
+
+Cold-start bucketing — where semantic IDs are supposed to pay off, and where an overall loss
+does not preclude a tail win — is Week 6.
 
 ### Ablations (ML-1M, test set, k=10 — **all rows at 100 epochs**, see REPRODUCTION_LOG.md)
 
@@ -233,6 +261,11 @@ reporting negative/mixed results rather than hiding them.
   (it previously did not — see the note under that table), but the results are still a
   statement about 100-epoch training. A4's popularity-negatives result in particular may be a
   convergence-speed effect rather than a final ranking.
+- **GenRec's full-ranking numbers come from beam search, SASRec's from exhaustive scoring.**
+  Beam width 20 is saturated (200 recovers nothing), so the two are comparable in practice,
+  but they are not the same procedure and the generative side can only lose from it.
+- **The atomic-vs-semantic comparison is not parameter-matched**, and cannot be — see the
+  Beauty comparison table. GenRec runs on 13.7% of SASRec's parameters by construction.
 - **Seed variance is measured for this repo's SASRec only.** The 0.96% / 3.37% floors come
   from five seeds of one model on ML-1M and are applied to RecBole runs and Beauty results as
   a proxy. Those are different models, frameworks, and datasets; the floors are indicative
