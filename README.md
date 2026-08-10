@@ -212,6 +212,7 @@ uv run python -m src.data.download --dest data/raw --dataset beauty --with-meta
 uv run python -m src.semantic_ids.embed --dataset ml-1m
 uv run python -m src.semantic_ids.rq_kmeans --dataset ml-1m
 uv run python -m scripts.inspect_semantic_ids --dataset ml-1m   # quality report
+uv run python -m src.train_genrec --config configs/genrec_beauty.yaml
 
 uv run pytest tests/
 ```
