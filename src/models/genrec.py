@@ -340,8 +340,17 @@ class GenRec(nn.Module):
         Numerically identical to the uncached path (asserted in the tests) --
         this is purely the same computation with the shared prefix shared.
         """
+        return self.score_with_cache(self.build_cache(history_tokens), item_tokens)
+
+    @torch.no_grad()
+    def score_with_cache(self, cache: dict, item_tokens: torch.Tensor) -> torch.Tensor:
+        """`score_item_tokens_cached` against a cache the caller already built.
+
+        Exhaustive scoring (every catalogue item for every user) chunks over
+        *candidates* rather than users, so the same history cache is reused
+        across chunks instead of rebuilt for each one.
+        """
         B, C, L = item_tokens.shape
-        cache = self.build_cache(history_tokens)
 
         # The level-0 prediction depends only on the history, so all C
         # candidates read it off the one state the cache already holds.
