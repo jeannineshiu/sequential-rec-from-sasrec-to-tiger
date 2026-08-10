@@ -177,12 +177,12 @@ flowchart LR
 - [~] **v2 RQ-VAE(stretch):跳過** — 0 dead codes,沒有 collapse 可修
 
 #### Day 5–7:生成式模型(約 6h,本週最難)
-- [ ] `src/models/genrec.py`:輸入序列改為 semantic ID token 序列(每 item 3–4 tokens);maxlen 相應 ×3–4,注意記憶體(Beauty maxlen 50 → token 序列 ~200)
-- [ ] Decoder autoregressive 生成 next item 的 3 codes
-- [ ] **分兩步降風險(對應附錄 C 備案):**
-  - [ ] Step 1:greedy decoding + 事後過濾非法 item — 先跑通端到端
-  - [ ] Step 2:`src/beam_search.py` — Trie 存合法 code 序列,constrained beam search(beam=10)
-  - [ ] 測試:任意 decode 結果必為合法 item(assert 全 test set)
+- [x] `src/models/genrec.py`:輸入序列改為 semantic ID token 序列(每 item 4 tokens);**刻意沿用 SASRec 骨幹**,讓 Week 6 的唯一變因是 item 表示法
+- [x] Decoder autoregressive 生成 next item 的 4 codes;另實作 `score_item_tokens` 讓既有 sampled evaluator 可直接沿用
+- [x] **分兩步降風險(對應附錄 C 備案):**
+  - [x] Step 1:greedy decoding + 事後過濾非法 item — 端到端跑通,並量到 legal rate
+  - [x] Step 2:`src/beam_search.py` — Trie constrained beam search(向量化,beam 預設 20)
+  - [x] 測試:任意 decode 結果必為合法 item;另 assert beam 分數 == 直接 scoring、beam 夠寬時 == 窮舉最佳
 
 **Week 5 產出檢查:** ✅ semantic IDs + 品質檢查 ✅ 生成式模型跑通 ✅ constrained decoding 正確
 

@@ -657,3 +657,97 @@ Trie-constrained beam search).
 
 ---
 
+## Week 5 (cont.) — the generative model (Day 5–7)
+
+**2026-08-10**
+
+### The architecture decision, and why it is not TIGER's
+
+TIGER is a T5 encoder-decoder over semantic ID tokens. This repo's GenRec is
+SASRec's backbone — the same causal blocks, the same pre-LN ordering, the same tied output
+head — with one thing changed: an item is a sequence of 4 semantic tokens instead of one
+atomic embedding.
+
+That is a deliberate departure from the paper, and the reason is Week 4. Swapping in a
+different transformer stack *alongside* the different item representation would produce a
+"TIGER vs SASRec" number that is a mixture of both changes, and Week 4 is the story of what
+happens when a comparison quietly acquires a second variable. With a shared backbone, Week 6's
+headline compares atomic IDs against semantic IDs and nothing else. The cost is that a
+negative result cannot be blamed on T5; the benefit is that a result of either sign means
+something.
+
+A second consequence, unplanned but useful: because the backbone is causal and shared,
+GenRec gets SASRec's training efficiency — every one of the ~200 token positions in a window
+is a supervised next-token prediction, so a user still yields one sample per epoch rather than
+one sample per prefix as TIGER's seq2seq formulation would.
+
+### Scoring, so the generative model can be compared at all
+
+A generative model naturally produces a *list*, not a score for an arbitrary item, which
+would have made it incomparable with every sampled-protocol number in this repo.
+`score_item_tokens` fixes that: a candidate's score is the log-probability the model assigns
+to generating its code sequence, teacher-forced over all 4 levels in one pass. The existing
+`evaluate_sampled` then runs unchanged, against the same frozen `negatives.json` every other
+model uses.
+
+Full ranking cannot work that way — scoring 12,101 items per user autoregressively is not one
+matrix product — so it uses constrained beam search, TIGER's own protocol. That carries an
+approximation the dot-product models do not have: an item the beam never reaches is a miss,
+even if exhaustive scoring would have put it in the top 10. Noted here so the Week 6 table can
+be read honestly; beam width bounds it.
+
+### Two bugs the tests caught, both about consistency rather than crashes
+
+**The two paths disagreed.** Beam search and candidate scoring appended tokens to the history
+differently, so each hit the positional-embedding limit at a different length and trimmed a
+different amount. Both "worked"; they just returned different numbers for the same item —
+`beam scores agree with direct scoring` failed by up to 0.28 nats. The fix is to reserve the
+final item slot of the window for the item being generated, so neither path ever overflows and
+both see an identical context. A silent 0.28-nat disagreement between the ranker and the
+scorer is precisely the class of bug that would have produced a confidently wrong Week 6
+table.
+
+**The probability test was wrong, not the code.** The first version asserted that the scores
+of all items exp-sum to 1. They do not, and should not: the per-level softmax spreads mass
+over every *code combination*, and only some combinations are real items. The corrected test
+asserts the sum over the full code space is 1 and the sum over items is strictly less — and
+that gap is exactly the probability mass constrained decoding redistributes and post-hoc
+filtering throws away.
+
+### The performance problem, and the fix that removed a methodological compromise
+
+The first end-to-end run took 11 minutes without finishing one epoch. Not a hang: scoring
+re-encoded the 196-token history once per candidate, so 101 candidates meant 101 redundant
+encodes to read 4 numbers.
+
+Caching the history's per-layer keys/values and pushing only the candidate's own tokens
+through attention:
+
+| | uncached | cached |
+|---|---|---|
+| sampled scoring, 40 users x 101 candidates | 1057 ms | 24.6 ms |
+| full sampled eval, all 22,363 users | ~591 s | **13.8 s** |
+| beam search (width 20), all 22,363 users | — | 11.7 s |
+
+**43x.** The cache is only trustworthy if it changes nothing, so the test asserts cached and
+uncached scores match to 1e-5 across 1 and 2 attention heads, an empty history, and a
+completely full window.
+
+The interesting part is what the speedup bought back. The config originally validated on a
+2,000-user subsample because full validation was unaffordable — a real deviation from the
+SASRec harness, and the kind of asymmetry that quietly makes two runs incomparable. At 13.8 s
+it is affordable, so GenRec now validates on all 22,363 users every epoch, exactly as SASRec
+does. An epoch costs 34 s end to end.
+
+### First measurement: the Trie is load-bearing
+
+From the 2-epoch smoke run, unconstrained greedy decoding produced a legal item only **32.8%**
+of the time. So constrained decoding is not a tidiness measure here — without it, two thirds
+of the model's first-choice recommendations would not exist. Whether that rate improves with
+training is a real question, and both numbers are logged every run.
+
+**Next:** the 200-epoch Beauty run, then Week 6's atomic-vs-semantic comparison and the
+cold-start bucket analysis.
+
+---
+

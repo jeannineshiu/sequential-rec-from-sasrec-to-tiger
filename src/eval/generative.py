@@ -1,0 +1,149 @@
+"""Evaluators for a model that *generates* its recommendations.
+
+The sampled protocol needs no new evaluator: `GenRec.score_item_tokens_cached`
+gives a log-probability for any candidate item, so the existing
+`evaluate_sampled` runs unchanged and the numbers land on the same scale as
+every SASRec row in the repo. That is the whole reason scoring was built
+alongside decoding.
+
+Full ranking is different. Scoring all 12,101 items per user with a decoder is
+far more expensive than one matrix product, so the generative model produces its
+top-K by constrained beam search instead -- which is TIGER's own protocol, and
+carries an approximation the dot-product models do not have: an item the beam
+never reaches counts as a miss even if exhaustive scoring would have ranked it
+top-10. Widening `beam_size` bounds how much that costs.
+"""
+
+from typing import Callable
+
+import numpy as np
+import torch
+
+from src.beam_search import batched_beam_search, greedy_decode
+from src.data.genrec_dataset import build_eval_batch
+from src.eval.metrics import summarize
+from src.models.genrec import GenRec
+from src.semantic_ids.vocab import SemanticIdVocab
+
+
+def make_sampled_score_fn(
+    model: GenRec, vocab: SemanticIdVocab, device: torch.device, chunk_size: int = 12800
+) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
+    """-> score_fn(item_input_batch [B, maxlen_items], candidates [B, C]) -> [B, C].
+
+    Takes *item* ids, as `evaluate_sampled` produces them, and expands to tokens
+    here so the shared evaluator needs no knowledge of semantic IDs.
+    """
+    model.eval()
+
+    def score_fn(input_batch: np.ndarray, candidate_batch: np.ndarray) -> np.ndarray:
+        history = torch.from_numpy(
+            vocab.item_tokens[input_batch].reshape(len(input_batch), -1)
+        ).long()
+        cand_tokens = torch.from_numpy(vocab.item_tokens[candidate_batch]).long()
+
+        scores = []
+        # Cached scoring keeps the [B, C, L, T] attention tensor in memory,
+        # so rows are still chunked -- just far fewer, far cheaper passes.
+        rows_per_chunk = max(1, chunk_size // candidate_batch.shape[1])
+        for start in range(0, len(history), rows_per_chunk):
+            h = history[start : start + rows_per_chunk].to(device)
+            c = cand_tokens[start : start + rows_per_chunk].to(device)
+            scores.append(model.score_item_tokens_cached(h, c).cpu().numpy())
+        return np.concatenate(scores)
+
+    return score_fn
+
+
+def evaluate_generative_full_ranking(
+    model: GenRec,
+    vocab: SemanticIdVocab,
+    train: dict[int, list[int]],
+    targets: dict[int, int],
+    maxlen_items: int,
+    device: torch.device,
+    extra_history: dict[int, list[int]] | None = None,
+    exclude_extra: dict[int, list[int]] | None = None,
+    k: int = 10,
+    beam_size: int = 20,
+    batch_size: int = 128,
+) -> dict[str, float]:
+    """Beam-search top-K against the whole catalogue.
+
+    Already-seen items are dropped from the returned list *after* decoding
+    (the model is free to generate them), which matches how the dot-product
+    full-ranking evaluator masks history before ranking.
+    """
+    users = list(targets.keys())
+    history_tokens = build_eval_batch(users, train, vocab, maxlen_items, extra_history)
+
+    # Beam wider than k, since filtering seen items shortens the list.
+    items, _ = batched_beam_search(
+        model,
+        vocab,
+        history_tokens,
+        device,
+        beam_size=beam_size,
+        n_return=beam_size,
+        batch_size=batch_size,
+    )
+
+    ranks = np.full(len(users), k, dtype=np.int64)  # k == "not retrieved" == a miss
+    for row, user in enumerate(users):
+        seen = set(train.get(user, []))
+        if exclude_extra:
+            seen |= set(exclude_extra.get(user, []))
+        seen.discard(targets[user])
+
+        rank = 0
+        for item in items[row]:
+            if item == 0 or item in seen:
+                continue
+            if item == targets[user]:
+                ranks[row] = rank
+                break
+            rank += 1
+            if rank >= k:
+                break
+
+    metrics = summarize(ranks, k=k)
+    metrics["beam_size"] = float(beam_size)
+    return metrics
+
+
+def decode_legality(
+    model: GenRec,
+    vocab: SemanticIdVocab,
+    train: dict[int, list[int]],
+    targets: dict[int, int],
+    maxlen_items: int,
+    device: torch.device,
+    extra_history: dict[int, list[int]] | None = None,
+    batch_size: int = 256,
+) -> dict[str, float]:
+    """How often does *unconstrained* greedy decoding produce a real item?
+
+    This is the number that says whether the Trie is load-bearing or decorative.
+    Step 1 of the plan's de-risking sequence: if greedy decoding is already
+    ~100% legal, constrained decoding is a correctness guarantee rather than a
+    quality intervention -- worth knowing which of the two it is.
+    """
+    users = list(targets.keys())
+    history_tokens = build_eval_batch(users, train, vocab, maxlen_items, extra_history)
+
+    n_legal = 0
+    n_hit = 0
+    for start in range(0, len(history_tokens), batch_size):
+        chunk = torch.from_numpy(history_tokens[start : start + batch_size]).long().to(device)
+        items, _ = greedy_decode(model, vocab, chunk)
+        for offset, item in enumerate(items):
+            if item is None:
+                continue
+            n_legal += 1
+            if item == targets[users[start + offset]]:
+                n_hit += 1
+
+    return {
+        "greedy_legal_rate": n_legal / len(users),
+        "greedy_HR@1": n_hit / len(users),
+    }
