@@ -17,6 +17,7 @@ dependencies = [
     "tabulate>=0.10.0",
     "recbole>=1.2.1",
     "py-spy>=0.4.2",
+    "sentence-transformers>=5.7.0",
 ]
 
 [project.optional-dependencies]

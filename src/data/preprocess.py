@@ -120,6 +120,18 @@ def run_pipeline(df: pd.DataFrame, out_dir: Path, k: int = 5) -> None:
     with open(out_dir / "meta.json", "w") as f:
         json.dump({"n_users": len(user_map), "n_items": len(item_map)}, f)
 
+    # Raw id -> internal id, needed to join item side-info (movie titles, ASIN
+    # metadata) onto the internal ids everything downstream speaks. Keys are
+    # stringified because JSON object keys are always strings.
+    with open(out_dir / "id_maps.json", "w") as f:
+        json.dump(
+            {
+                "user_map": {str(k): v for k, v in user_map.items()},
+                "item_map": {str(k): v for k, v in item_map.items()},
+            },
+            f,
+        )
+
     print(f"Wrote splits to {out_dir}")
 
 

@@ -10,7 +10,7 @@ Execution checklist: [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md)
 Debugging trail: [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md)
 BERT4Rec controversy analysis: [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md)
 
-## Status: Week 3 done (M3 met) — Week 4 mostly done (M4 partially met)
+## Status: Week 3 done (M3 met) — Week 4 mostly done (M4 partially met) — Week 5 in progress (semantic IDs built)
 
 Week 4 ran four protocol-matched models at 200 epochs on ML-1M. The finding is not about
 either architecture: **BERT4Rec's win over SASRec on this dataset is a baseline-configuration
@@ -144,6 +144,36 @@ the ML-1M trend would predict, since full-ranking difficulty scales with catalog
 (12,101 items vs. 3,416) independent of model quality — see REPRODUCTION_LOG.md for the
 full discussion.
 
+### Semantic IDs (Week 5, input to the TIGER-style model)
+
+Item text → `all-MiniLM-L6-v2` (384-dim) → residual KMeans, 3 levels × 256 codes, plus a 4th
+token that disambiguates items landing on an identical 3-token code. ML-1M text is title +
+genres, Beauty is title + deepest category path + brand. Metadata coverage is 100% on both
+datasets (3,416/3,416 and 12,101/12,101).
+
+| | ML-1M | Beauty |
+|---|---|---|
+| dead codes (any level) | 0 | 0 |
+| collision rate on the 3-token code | 1.46% | 11.78% |
+| largest colliding group | 3 | 12 |
+| embedding norm explained by 3 tokens | 55.7% | 48.7% |
+| within-prefix cosine @ depth 3 (vs. random pair) | 0.753 (0.439) | 0.871 (0.288) |
+
+No dead codes on either dataset — the collapse failure mode RQ-VAE exists to fix does not
+appear here, so the RQ-VAE stretch goal stays skipped. Prefix coherence rises monotonically
+with depth on both, which is the coarse-to-fine property the generative model depends on.
+
+Two things worth knowing before reading any Week 6 result. **Beauty collides at 11.78%**: for
+~1 item in 8, the only thing separating it from a catalog neighbour is a token carrying no
+content signal, which caps what semantic IDs can do there. And **ML-1M's codes encode release
+year at least as strongly as genre** — items sharing a 2-token prefix are 1.68 years apart on
+average against a 15.85-year baseline — because MovieLens titles embed the year in the string.
+Nobody chose that; it came in with the text format.
+
+Per-dataset reports with sampled prefix groups:
+[`results/tables/semantic_ids_ml-1m.md`](results/tables/semantic_ids_ml-1m.md),
+[`results/tables/semantic_ids_beauty.md`](results/tables/semantic_ids_beauty.md).
+
 ## Methodology notes
 
 - **Two evaluation protocols, always reported side by side.** The sampled protocol
@@ -176,6 +206,13 @@ uv run python -m src.train --config configs/sasrec_ml1m.yaml
 uv run python -m src.train --config configs/sasrec_beauty.yaml
 uv run python -m src.export_results   # rebuilds results/tables/master.md + the A3 figure
 uv run python -m scripts.seed_variance  # noise floor + every claimed margin against it
+
+# Week 5: semantic IDs (needs the extra ~99MB Beauty metadata file)
+uv run python -m src.data.download --dest data/raw --dataset beauty --with-meta
+uv run python -m src.semantic_ids.embed --dataset ml-1m
+uv run python -m src.semantic_ids.rq_kmeans --dataset ml-1m
+uv run python -m scripts.inspect_semantic_ids --dataset ml-1m   # quality report
+
 uv run pytest tests/
 ```
 

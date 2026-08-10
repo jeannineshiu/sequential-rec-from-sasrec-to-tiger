@@ -165,16 +165,16 @@ flowchart LR
 ### Week 5 — Semantic ID 構建 + 模型改造
 
 #### Day 1–2:Content embedding(約 3h)
-- [ ] `uv add sentence-transformers`;`src/semantic_ids/embed.py`
-- [ ] ML-1M:title + genres;Beauty:title + category + brand → `all-MiniLM-L6-v2` → 384-dim
-- [ ] 存 item_id → embedding lookup(npz/parquet)
+- [x] `uv add sentence-transformers`;`src/semantic_ids/embed.py`
+- [x] ML-1M:title + genres;Beauty:title + category + brand → `all-MiniLM-L6-v2` → 384-dim(metadata 覆蓋率兩邊皆 100%)
+- [x] 存 item_id → embedding lookup(`data/processed/*/semantic_ids/embeddings.npz`;另補回 preprocess 從未存下的 `id_maps.json`)
 
 #### Day 3–4:量化(約 4h)
-- [ ] **v1 RQ-KMeans(必做):** `src/semantic_ids/rq_kmeans.py` — 3 levels × 256 codes,逐層對 residual 跑 KMeans
-- [ ] 碰撞處理:同 3-level code 的 items 加第 4 個 disambiguation token
-- [ ] 品質 spot check:抽 10 組同 prefix items,人工確認語意相近;結果記 notebook
-- [ ] 統計:碰撞率、各層 code 使用分布(有無 dead codes)→ 記入 log
-- [ ] **v2 RQ-VAE(stretch,時間不夠直接跳過):** KMeans init + EMA update 緩解 collapse
+- [x] **v1 RQ-KMeans(必做):** `src/semantic_ids/rq_kmeans.py` — 3 levels × 256 codes,逐層對 residual 跑 KMeans
+- [x] 碰撞處理:同 3-level code 的 items 加第 4 個 disambiguation token(ML-1M 1.46% / Beauty 11.78%)
+- [x] 品質 spot check:`scripts/inspect_semantic_ids.py` → `results/tables/semantic_ids_*.md`(另加 within-prefix cosine 的量化指標)
+- [x] 統計:碰撞率、各層 code 使用分布 → 兩個資料集皆 0 dead codes,記入 log
+- [~] **v2 RQ-VAE(stretch):跳過** — 0 dead codes,沒有 collapse 可修
 
 #### Day 5–7:生成式模型(約 6h,本週最難)
 - [ ] `src/models/genrec.py`:輸入序列改為 semantic ID token 序列(每 item 3–4 tokens);maxlen 相應 ×3–4,注意記憶體(Beauty maxlen 50 → token 序列 ~200)

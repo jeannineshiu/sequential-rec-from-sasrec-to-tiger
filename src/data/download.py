@@ -13,6 +13,9 @@ ML1M_URL = "https://files.grouplens.org/datasets/movielens/ml-1m.zip"
 ML1M_MD5 = "c4d9eecfca2ab87c1945afe126590906"
 
 BEAUTY_URL = "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/ratings_Beauty.csv"
+BEAUTY_META_URL = (
+    "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Beauty.json.gz"
+)
 
 MAX_RETRIES = 5
 RETRY_BACKOFF_SEC = 5
@@ -93,12 +96,44 @@ def download_beauty(dest_dir: Path) -> Path:
     return out_dir
 
 
+def download_beauty_meta(dest_dir: Path) -> Path:
+    """Download the Amazon 'Beauty' item metadata (~99MB gzip) into
+    dest_dir/beauty/ and return that directory.
+
+    Only needed from Week 5 on, for semantic IDs -- the SASRec/BERT4Rec work
+    uses interactions alone. Taken from the same categoryFiles/ directory as
+    ratings_Beauty.csv, so the ASINs line up with the ratings file (verified:
+    all 12,101 5-core items are present in the metadata).
+    """
+    dest_dir = Path(dest_dir)
+    out_dir = dest_dir / "beauty"
+    meta_file = out_dir / "meta_Beauty.json.gz"
+    if meta_file.exists():
+        print(f"Already present: {meta_file}")
+        return out_dir
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading {BEAUTY_META_URL} ...")
+    with _urlopen_with_retry(BEAUTY_META_URL) as resp, open(meta_file, "wb") as f:
+        shutil.copyfileobj(resp, f)
+
+    print(f"Saved to {meta_file}")
+    return out_dir
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dest", type=str, default="data/raw")
     parser.add_argument("--dataset", choices=["ml-1m", "beauty", "all"], default="all")
+    parser.add_argument(
+        "--with-meta",
+        action="store_true",
+        help="also fetch Amazon Beauty item metadata (~99MB), needed for Week 5 semantic IDs",
+    )
     args = parser.parse_args()
     if args.dataset in ("ml-1m", "all"):
         download_ml1m(Path(args.dest))
     if args.dataset in ("beauty", "all"):
         download_beauty(Path(args.dest))
+        if args.with_meta:
+            download_beauty_meta(Path(args.dest))

@@ -548,3 +548,112 @@ Week 3's carried an unexamined epoch budget. Both were introduced while carefull
 something else.
 
 ---
+## Week 5 — Semantic IDs (Day 1–4: content embeddings + RQ-KMeans)
+
+**2026-08-10**
+
+### The prerequisite nobody wrote down: the id map was never saved
+
+Content embeddings need to join item side-info (movie titles, Amazon ASINs) onto the
+internal contiguous item ids that everything downstream speaks. `preprocess.py` built that
+map and threw it away — `meta.json` kept only `n_users` / `n_items`. Four weeks of results
+are keyed to ids whose provenance existed only inside a function scope.
+
+Recovering it is trivial (`reindex_ids` sorts the raw ids, so it is deterministic), but
+"trivial to recompute" is exactly the assumption worth testing before building on it. Added
+`id_maps.json` to the pipeline output and re-ran both datasets into a scratch directory:
+`train.json`, `valid.json`, `test.json`, `meta.json` came back **byte-identical** to the
+files on disk for both ML-1M and Beauty. So the maps are the ones the existing results were
+produced with, and no Week 1–4 number is disturbed.
+
+### Beauty item metadata
+
+`ratings_Beauty.csv` is ratings-only. The matching `meta_Beauty.json.gz` (99 MB) is still
+live in the same SNAP `categoryFiles/` directory, which matters — it is the same ASIN
+namespace as the ratings file, so the join needs no fuzzy matching. It is one Python literal
+per line (single-quoted), not JSON, so it wants `ast.literal_eval`.
+
+Coverage, over the 12,101 5-core items: **12,101 matched (100%)**. Fields present: categories
+100%, title 99.9%, brand 82.7%, description 92.2%. Description is excluded from the embedding
+text — it runs to paragraphs of marketing copy and would swamp title/category/brand in a
+384-dim mean-pooled encoder. ML-1M is 3,416/3,416 from `movies.dat`.
+
+So neither dataset has an items-without-text problem. `has_text` is stored in the npz anyway,
+because discovering that at model-training time would be much more expensive than checking.
+
+### Embeddings
+
+`all-MiniLM-L6-v2`, 384-dim, unnormalized on disk (normalization is a quantizer decision).
+ML-1M text is `"<title>. Genres: ..."`, Beauty is `"<title>. Category: <deepest path>. Brand:
+<brand>"`. Both datasets encode in under 30 s on laptop MPS — 4.9 MB and 17.2 MB npz.
+
+### RQ-KMeans, 3 levels × 256 codes
+
+Embeddings are L2-normalized before quantization. MiniLM is trained for cosine similarity, so
+the Euclidean geometry KMeans minimizes is only meaningful on the unit sphere; without it the
+clusters partly track text length, which for Beauty means they track *marketing verbosity*.
+
+| | ML-1M | Beauty |
+|---|---|---|
+| items | 3,416 | 12,101 |
+| codes used / level | 256, 256, 256 | 256, 256, 256 |
+| dead codes | 0 | 0 |
+| collision rate (identical 3-token code) | 1.46% | 11.78% |
+| largest colliding group | 3 | 12 |
+| residual norm explained by 3 tokens | 55.7% | 48.7% |
+
+No dead codes at any level on either dataset, which is the failure mode RQ-VAE exists to fix —
+so the stretch goal (RQ-VAE with EMA updates) has nothing to fix here and stays skipped.
+Beauty's 11.78% collision rate is the number that matters for the model: the disambiguation
+token needs a vocabulary of at least 12, and ~1 item in 8 is distinguished *only* by a token
+that carries no content signal at all. That is a ceiling on what semantic IDs can do for the
+Beauty cold-start story, and it is worth stating before running the experiment rather than
+after.
+
+### Do the codes mean anything?
+
+Codebook health is a statement about the quantizer, not about semantics. Measured it directly
+— mean cosine similarity between two items sharing a code prefix vs. two random items:
+
+| prefix depth | ML-1M | Beauty |
+|---|---|---|
+| 1 token | 0.641 (+0.202) | 0.605 (+0.318) |
+| 2 tokens | 0.722 (+0.282) | 0.738 (+0.451) |
+| 3 tokens | 0.753 (+0.313) | 0.871 (+0.583) |
+| random pair | 0.439 | 0.288 |
+
+Coherence rises monotonically with depth on both, which is the coarse-to-fine property the
+whole idea depends on. Sampled groups read correctly: Beauty produces a hair-dryer prefix, a
+Joico shampoo-duo prefix, a China Glaze nail-polish prefix. Full reports:
+`results/tables/semantic_ids_{ml-1m,beauty}.md`.
+
+### What ML-1M's codes actually cluster on
+
+Reading the ML-1M groups, they look less like genres than like *years* — "1997 war films",
+"1994 dramas", "1986 comedies". Measured it, since the title string carries the release year:
+
+| | mean abs. year gap | genre Jaccard |
+|---|---|---|
+| same 1-token prefix | 5.36 | 0.538 |
+| same 2-token prefix | **1.68** | 0.737 |
+| same 3-token prefix | 2.19 | 0.844 |
+| random pair | 15.85 | 0.164 |
+
+Two items sharing a 2-token prefix are on average **1.68 years apart against a 15.85-year
+baseline**. Genre is captured strongly too, so this is not the year *instead of* content — the
+ML-1M semantic ID is roughly an era × genre address, where Beauty's is category × brand.
+
+This is a modelling choice that was made by accident, in the sense that nobody decided "the
+release year should be a primary axis of the semantic ID" — it arrived because MovieLens
+titles happen to embed the year in the string. No split leakage is involved (no interaction
+data touches the embedding), but it is the same shape of unexamined default as Week 4's
+dropout and Week 3's epoch budget, caught this time before it decided a result rather than
+after. Whether stripping the year helps or hurts is a one-line change and a cheap rerun; left
+as an ablation to run against the Week 6 comparison rather than settled by taste now.
+
+**Next:** Day 5–7 — `src/models/genrec.py`, the generative model over semantic ID token
+sequences, in the two de-risking steps from the plan (greedy + post-filter first, then
+Trie-constrained beam search).
+
+---
+
