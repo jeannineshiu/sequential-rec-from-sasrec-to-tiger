@@ -191,12 +191,12 @@ flowchart LR
 ### Week 6 — 對比實驗 + 包裝發布
 
 #### Day 1–3:核心對比(約 6h)
-- [x] **主實驗:** SASRec (atomic) vs GenRec (semantic),Beauty,full ranking — GenRec 0.0329 vs SASRec 0.0594(−44.6%);未達 TIGER 參考 0.0648,差異與限制照實記錄
-- [x] **Cold-start 分桶(招牌之二):** `src/eval/cold_start.py` + `results/figures/cold_start_buckets.png` — **假說反向失敗**:越稀有差距越大(tail −88.2%)
-- [x] 預期管理:實際是大輸,並診斷出機制(推薦多樣性塌縮:7% vs 76% catalogue coverage)
+- [x] **主實驗:** SASRec (atomic) vs GenRec (semantic),Beauty,**兩邊皆窮舉排序** — GenRec 0.0251 vs SASRec 0.0594(−57.7%);先前 −44.6% 是 beam 灌高的,已更正
+- [x] **Cold-start 分桶(招牌之二):** `src/eval/cold_start.py` — 原樣訓練下**假說反向失敗**;去除 popularity prior 後在 unseen 桶成立(0.0725 vs SASRec 0.0000,p=0.0008)
+- [x] 預期管理:實際是大輸,並診斷出機制(多樣性塌縮 14% vs 76% coverage);去偏只把 coverage 推到 16%,故機制只被部分證實
 
 #### Day 4–5:Serving demo + README(約 4h)
-- [ ] `serving/app.py`:FastAPI — 輸入互動序列 → top-10 推薦,附 semantic ID 解碼展示
+- [x] `serving/app.py`:FastAPI — 兩模型並排 top-10,附 semantic ID / 頻次 / bucket;`/random_user` 可直接取真實歷史
 - [ ] README 重寫:復現對照表置頂 → 方法論(評估協定討論)→ 招牌兩圖 → 限制誠實列出 → 復現指令(`uv run ...` 一鍵)
 - [ ] (Optional)Railway 部署
 

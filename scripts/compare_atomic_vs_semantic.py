@@ -25,7 +25,7 @@ from src.eval.cold_start import (
     plot_buckets,
 )
 from src.eval.full_ranking import full_ranking_ranks
-from src.eval.generative import generative_full_ranking_ranks
+from src.eval.generative import exhaustive_ranks, generative_full_ranking_ranks, log_prior
 from src.models.genrec import GenRec
 from src.models.sasrec import SASRec
 from src.semantic_ids.vocab import SemanticIdVocab
@@ -34,6 +34,10 @@ from src.utils import load_processed
 
 ATOMIC = "SASRec (atomic)"
 SEMANTIC = "GenRec (semantic)"
+
+
+def semantic_label(alpha: float) -> str:
+    return SEMANTIC if not alpha else f"{SEMANTIC}, debiased a={alpha:g}"
 
 
 def load_sasrec(cfg: dict, n_items: int, device: torch.device, checkpoint: Path) -> SASRec:
@@ -67,7 +71,9 @@ def load_genrec(cfg: dict, vocab: SemanticIdVocab, device: torch.device, checkpo
     return model.eval()
 
 
-def main(sasrec_config: str, genrec_config: str, k: int, beam_size: int) -> None:
+def main(
+    sasrec_config: str, genrec_config: str, k: int, beam_size: int, alphas: list[float], beam: bool
+) -> None:
     device = pick_device()
     with open(sasrec_config) as f:
         sasrec_cfg = yaml.safe_load(f)
@@ -98,31 +104,33 @@ def main(sasrec_config: str, genrec_config: str, k: int, beam_size: int) -> None
         exclude_extra=extra,
     )
 
-    print(f"scoring GenRec (constrained beam search, beam={beam_size}) ...")
-    users_b, ranks_b = generative_full_ranking_ranks(
-        genrec,
-        vocab,
-        train,
-        test,
-        maxlen_items=genrec_cfg["model"]["maxlen"],
-        device=device,
-        extra_history=extra,
-        exclude_extra=extra,
-        k=k,
-        beam_size=beam_size,
-    )
+    frequency = item_train_frequency(train, n_items)
+    ranks_by_model = {ATOMIC: ranks_a}
+
+    if beam:
+        # Kept for reproducing the superseded numbers; see the log for why beam
+        # ranking flatters the generative model rather than only costing it.
+        print(f"scoring GenRec (constrained beam search, beam={beam_size}) ...")
+        users_b, ranks_b = generative_full_ranking_ranks(
+            genrec, vocab, train, test,
+            maxlen_items=genrec_cfg["model"]["maxlen"], device=device,
+            extra_history=extra, exclude_extra=extra, k=k, beam_size=beam_size,
+        )
+        ranks_by_model[f"{SEMANTIC}, beam {beam_size}"] = ranks_b
+    else:
+        print(f"scoring GenRec (exhaustive, alphas={alphas}) ...")
+        users_b, ranks, _ = exhaustive_ranks(
+            genrec, vocab, train, test,
+            maxlen_items=genrec_cfg["model"]["maxlen"], device=device,
+            alphas=alphas, prior=log_prior(frequency), extra_history=extra,
+        )
+        for alpha in alphas:
+            ranks_by_model[semantic_label(alpha)] = ranks[alpha]
+
     assert users_a == users_b, "the two models were scored on different user orderings"
 
-    frequency = item_train_frequency(train, n_items)
-    rows = bucketed_metrics(
-        users_a,
-        {ATOMIC: ranks_a, SEMANTIC: ranks_b},
-        test,
-        frequency,
-        k=k,
-    )
-
-    models = [ATOMIC, SEMANTIC]
+    rows = bucketed_metrics(users_a, ranks_by_model, test, frequency, k=k)
+    models = list(ranks_by_model)
     table = format_table(rows, models, k=k)
     print("\n" + table)
 
@@ -136,8 +144,8 @@ def main(sasrec_config: str, genrec_config: str, k: int, beam_size: int) -> None
     out.write_text(
         "# Atomic vs. semantic IDs — Amazon Beauty, full ranking, test set\n\n"
         f"Buckets by the target item's training-split frequency ({bucket_desc}).\n"
-        f"SASRec ranks exhaustively; GenRec ranks by constrained beam search (beam {beam_size}),\n"
-        "which can only cost the generative side — see the beam-sensitivity table in the log.\n\n"
+        "Both models rank exhaustively over the whole catalogue, so no beam approximation is\n"
+        "involved on either side. `debiased a=1` subtracts the log training-frequency prior.\n\n"
         + table
         + "\n\n![cold start buckets](../figures/cold_start_buckets.png)\n"
     )
@@ -156,5 +164,9 @@ if __name__ == "__main__":
     parser.add_argument("--genrec-config", type=str, default="configs/genrec_beauty.yaml")
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--beam-size", type=int, default=20)
+    parser.add_argument("--alphas", type=float, nargs="+", default=[0.0, 1.0])
+    parser.add_argument(
+        "--beam", action="store_true", help="rank GenRec by beam search instead of exhaustively"
+    )
     args = parser.parse_args()
-    main(args.sasrec_config, args.genrec_config, args.k, args.beam_size)
+    main(args.sasrec_config, args.genrec_config, args.k, args.beam_size, args.alphas, args.beam)

@@ -920,3 +920,107 @@ longer sequences, shows the same shape.
 
 ---
 
+## Week 6 (cont.) — a correction: beam search was flattering the generative model
+
+**2026-08-11**
+
+### What was wrong
+
+The Week 6 entry above states that GenRec's full-ranking numbers come from beam search,
+that widening the beam 20 → 200 changes nothing, and therefore that the approximation
+"can only cost the generative side". **The last part is false, and false in the direction
+that mattered.** Beam ranking was inflating GenRec's scores, not depressing them.
+
+Found it by scoring every catalogue item for every user — which the history KV cache makes
+affordable — and comparing the two rankings on the same 1,500 users, same model, same masking:
+
+| | HR@10 |
+|---|---|
+| beam 20 | 0.0407 |
+| exhaustive | 0.0240 |
+
+| of the 61 users where beam reports a top-10 hit | |
+|---|---|
+| exhaustive agrees it is a hit | 27 |
+| beam's rank is better than the true rank | 39 |
+| **mean true rank of a beam-reported "hit"** | **166.9** |
+
+Beam search calls an item top-10 when its true rank is ~167th. The mechanism is pruning at
+level 1: the beam keeps 20 of 256 first codes, and every high-scoring item behind a discarded
+prefix vanishes from the returned list. Those vanished items are exactly the competitors that
+should have pushed the target down, so the target's position in a 20-item list flatters it.
+Beam also misses genuine hits (9 of 36), but that effect is smaller.
+
+### Why the beam-width sweep did not catch it
+
+Widening the beam does two opposing things at once: it finds more true targets (helps HR@10)
+and it finds more competitors that outrank them (hurts HR@10). The two roughly cancel, so a
+flat HR@10-vs-beam-width curve reads as "saturated" when it is really two biases in balance.
+The sweep measured the wrong quantity — it tested whether the beam finds the target, never
+whether the beam's *ranking* is faithful. The right test is the one that should have been run
+first: compare against exhaustive scoring.
+
+This is the third time in this project that a control turned out to be measuring something
+adjacent to the thing it was supposed to control (Week 3's epoch budget, Week 4's dropout
+default, now this). The pattern is the same each time: the check was cheap, plausible, and
+answered a slightly different question than the one being asked.
+
+### Corrected numbers, and what actually holds
+
+All rows exhaustive over the full catalogue, all 22,363 test users, k=10. SASRec's numbers are
+unchanged — it was always ranked exhaustively.
+
+| Amazon Beauty, full ranking | overall | unseen (138) | tail (4,594) | torso (9,539) | head (8,092) |
+|---|---|---|---|---|---|
+| SASRec (atomic) | **0.0594** | 0.0000 | **0.0185** | **0.0427** | **0.1033** |
+| GenRec (semantic) | 0.0251 | 0.0072 | 0.0026 | 0.0060 | 0.0608 |
+| GenRec, debiased α=1 | 0.0117 | **0.0725** | 0.0141 | 0.0080 | 0.0137 |
+
+GenRec's overall loss is **−57.7%**, not the −44.6% reported from the beam. Every superseded
+figure moves the same way: the generative model is worse than the first pass said.
+
+### The debiasing sweep, and a partial vindication
+
+`score_α(item) = log P(item | history) − α · log P_prior(item)`, add-one smoothed training
+frequency, exhaustive:
+
+| α | HR@10 | unseen | tail | torso | head | distinct items in top-10 |
+|---|---|---|---|---|---|---|
+| 0 | 0.0251 | 0.0072 | 0.0026 | 0.0060 | 0.0608 | 1,749 |
+| 0.25 | 0.0232 | 0.0072 | 0.0048 | 0.0073 | 0.0526 | 1,838 |
+| 0.5 | 0.0198 | 0.0145 | 0.0065 | 0.0089 | 0.0402 | 1,974 |
+| 0.75 | 0.0155 | 0.0362 | 0.0122 | 0.0084 | 0.0255 | 2,021 |
+| 1 | 0.0117 | **0.0725** | 0.0141 | 0.0080 | 0.0137 | 1,976 |
+
+Two results, in opposite directions.
+
+**The cold-start claim survives, in its narrowest form.** On items never seen in training, the
+debiased generative model retrieves 7.25% at HR@10 where SASRec retrieves 0.00% — 10 hits in
+138 against none (Fisher exact, one-sided, **p = 0.0008**). On tail items the debiased model is
+statistically indistinguishable from SASRec (~65 vs ~85 hits in 4,594, p = 0.059). So semantic
+IDs *can* reach items an atomic embedding table structurally cannot, which is the thing the
+architecture was supposed to buy. The price is more than half the overall accuracy
+(0.0251 → 0.0117), and it is paid on the head, where most of the traffic is.
+
+**The proposed mechanism is only partly right.** If the popularity prior were the whole story,
+removing it should restore diversity. Recommendation coverage goes 1,749 → 1,976 distinct
+items out of 12,101 — a 13% improvement on a number that needs to grow 5x to match SASRec's
+9,221. Debiasing moves probability mass from popular items to rare ones without making the
+model more *discriminative*; it trades head accuracy for tail accuracy along a fixed frontier
+rather than expanding it. The collapse is therefore not merely a scoring-time artifact that a
+better decoder fixes — something about training the model to emit 4 codes leaves it with far
+less resolution over the catalogue than 12,101 free embeddings have.
+
+### Status of the remaining Week 6 work
+
+Done: the main comparison, cold-start bucketing, the diversity/per-level diagnosis, the beam
+correction, the debiasing sweep, and the serving demo.
+
+In flight: a single-pass version of the corrected comparison table (SASRec + GenRec α=0 +
+GenRec α=1 scored in one run, for the figure). The numbers above come from two completed
+full-catalogue runs rather than one, which is a provenance wrinkle worth closing but not a
+correctness problem — both used identical users, masking, and metric code.
+
+Not done: README rewrite against the corrected numbers, and the Medium/interview write-ups.
+
+---

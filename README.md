@@ -10,7 +10,7 @@ Execution checklist: [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md)
 Debugging trail: [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md)
 BERT4Rec controversy analysis: [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md)
 
-## Status: Weeks 1–5 done — Week 6 main experiment done (the cold-start hypothesis fails, in the direction it was supposed to win)
+## Status: Weeks 1–5 done — Week 6 experiments done (write-up pending)
 
 Week 4 ran four protocol-matched models at 200 epochs on ML-1M. The finding is not about
 either architecture: **BERT4Rec's win over SASRec on this dataset is a baseline-configuration
@@ -97,12 +97,13 @@ one embedding or a sequence of four semantic tokens.
 | test, k=10 | sampled HR@10 | sampled NDCG@10 | full HR@10 | full NDCG@10 | parameters |
 |---|---|---|---|---|---|
 | SASRec (atomic) | **0.5097** | **0.3453** | **0.0594** | **0.0303** | 828,352 |
-| GenRec (semantic) | 0.3621 | 0.2235 | 0.0329 | 0.0168 | **113,472** |
-| relative | −28.96% | −35.27% | −44.6% | −44.6% | **13.7%** |
+| GenRec (semantic) | 0.3621 | 0.2235 | 0.0251 | 0.0131 | **113,472** |
+| relative | −28.96% | −35.27% | −57.7% | −56.8% | **13.7%** |
 
-**The generative model loses, and it is not a decoding artifact** — widening the beam from 20
-to 200 moves full HR@10 by 0.0002 (`uv run python -m scripts.beam_sensitivity`), and every
-margin is far outside the seed-noise floor.
+Both full-ranking columns rank exhaustively over the whole catalogue. **An earlier version of
+this table ranked GenRec by beam search and reported −44.6%; that was too generous to the
+generative model** — see [the correction](#correction-beam-search-was-flattering-the-generative-model).
+Every margin is far outside the seed-noise floor.
 
 The parameter column is what makes this interesting rather than just negative. 12,101 item
 embeddings collapse into 782 token embeddings — a 15.5x smaller table — so GenRec gives up
@@ -123,28 +124,55 @@ share. Prediction: GenRec loses on the head and closes the gap on the tail.
 
 ![cold-start buckets](results/figures/cold_start_buckets.png)
 
-| bucket (target's train frequency) | users | SASRec HR@10 | GenRec HR@10 | relative |
-|---|---|---|---|---|
-| unseen (0) | 138 | 0.0000 | 0.0000 | — |
-| tail (1–4) | 4,594 | 0.0185 | 0.0022 | **−88.2%** |
-| torso (5–19) | 9,539 | 0.0427 | 0.0085 | **−80.1%** |
-| head (20+) | 8,092 | 0.1033 | 0.0797 | −22.8% |
-| overall | 22,363 | 0.0594 | 0.0329 | −44.6% |
+All rows exhaustive over the full catalogue. `debiased α=1` subtracts the log training-frequency
+prior at ranking time — same model, same weights, different scoring rule.
 
-**The gap widens monotonically as items get rarer — the opposite of the prediction.** Re-running
-every bucket at beam 200 instead of 20 makes it slightly worse, not better (tail −89.4%), so it
-is not a decoding artifact. The `unseen` bucket is uninformative: 138 users, both models at
-zero; GenRec's zero is consistent with any true rate below ~2.2%.
+| bucket (target's train frequency) | users | SASRec | GenRec | GenRec debiased α=1 |
+|---|---|---|---|---|
+| unseen (0) | 138 | 0.0000 | 0.0072 | **0.0725** |
+| tail (1–4) | 4,594 | **0.0185** | 0.0026 | 0.0141 |
+| torso (5–19) | 9,539 | **0.0427** | 0.0060 | 0.0080 |
+| head (20+) | 8,092 | **0.1033** | 0.0608 | 0.0137 |
+| overall | 22,363 | **0.0594** | 0.0251 | 0.0117 |
+
+**As trained, the gap widens as items get rarer — the opposite of the prediction.**
+
+**Debiased, the claim survives in its narrowest form.** On items never seen in training the
+generative model retrieves 7.25% at HR@10 where SASRec retrieves 0.00% — 10 hits in 138 against
+none, Fisher exact one-sided **p = 0.0008**. On tail items it becomes statistically
+indistinguishable from SASRec (p = 0.059). Semantic IDs really can reach items an atomic
+embedding table structurally cannot. The price is more than half the overall accuracy, paid on
+the head where most of the traffic is.
 
 ### Why: recommendation diversity collapses
 
 | model | distinct items across all top-10s | median train freq | % head | % torso | % tail |
 |---|---|---|---|---|---|
 | SASRec (atomic) | **9,221** (76% of catalogue) | 22 | 54.2% | 42.1% | 3.7% |
-| GenRec (semantic) | **839** (7%) | 84 | 84.7% | 13.1% | 2.2% |
+| GenRec (semantic) | **1,749** (14%) | 84 | 84.7% | 13.1% | 2.2% |
 
-GenRec's entire output covers 7% of the catalogue. Generation collapsed onto a small set of
+GenRec's entire output covers 14% of the catalogue. Generation collapsed onto a small set of
 high-probability code sequences, and the tail result is a symptom of that.
+
+But the mechanism is only *partly* the popularity prior. If the prior were the whole story,
+removing it would restore diversity — and debiasing moves coverage only 1,749 → 1,976, a 13%
+gain on a number that needs 5x to match SASRec. Debiasing trades head accuracy for tail
+accuracy along a fixed frontier rather than widening it. Something about learning to emit four
+codes leaves the model with far less resolution over the catalogue than 12,101 free embeddings
+have, and that is not a scoring-time artifact a better decoder repairs.
+
+### Correction: beam search was flattering the generative model
+
+An earlier version of this README ranked GenRec by constrained beam search and argued the
+approximation "can only cost the generative side" because widening the beam 20 → 200 changed
+nothing. That reasoning was wrong. On the same 1,500 users beam-20 reports HR@10 0.0407 where
+exhaustive scoring gives 0.0240, and the **mean true rank of a beam-reported top-10 hit is
+167**. Beam pruning discards 236 of 256 first codes, so the high-scoring items that should
+have outranked the target simply never appear in the returned list.
+
+The beam-width sweep missed this because widening the beam finds more true targets *and* more
+competitors at the same time; the two cancel, and a flat curve reads as convergence. The sweep
+tested whether the beam finds the target, never whether its ranking is faithful.
 
 The likely mechanism is not really about semantic IDs: GenRec ranks by P(item | history),
 which contains the popularity prior, while SASRec's dot product is unnormalized and carries no
@@ -304,9 +332,10 @@ reporting negative/mixed results rather than hiding them.
   (it previously did not — see the note under that table), but the results are still a
   statement about 100-epoch training. A4's popularity-negatives result in particular may be a
   convergence-speed effect rather than a final ranking.
-- **GenRec's full-ranking numbers come from beam search, SASRec's from exhaustive scoring.**
-  Beam width 20 is saturated (200 recovers nothing), so the two are comparable in practice,
-  but they are not the same procedure and the generative side can only lose from it.
+- **Both models now rank exhaustively**; the earlier beam-ranked GenRec numbers were
+  optimistic and have been corrected throughout (see the correction section). Beam search
+  remains what the serving demo uses, because ranking 12,101 items per request is not a
+  serving-time option — so the demo's list is measurably more flattering than the tables.
 - **The atomic-vs-semantic comparison is not parameter-matched**, and cannot be — see the
   Beauty comparison table. GenRec runs on 13.7% of SASRec's parameters by construction.
 - **Seed variance is measured for this repo's SASRec only.** The 0.96% / 3.37% floors come

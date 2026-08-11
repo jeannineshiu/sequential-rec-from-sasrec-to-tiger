@@ -19,6 +19,8 @@ from typing import Callable
 import numpy as np
 import torch
 
+import time
+
 from src.beam_search import batched_beam_search, greedy_decode
 from src.data.genrec_dataset import build_eval_batch
 from src.eval.metrics import summarize
@@ -176,3 +178,76 @@ def decode_legality(
         "greedy_legal_rate": n_legal / len(users),
         "greedy_HR@1": n_hit / len(users),
     }
+
+
+def log_prior(frequency: np.ndarray) -> np.ndarray:
+    """Add-one smoothed log P(item) over the training split; index 0 unused."""
+    counts = frequency.astype(np.float64) + 1.0
+    counts[0] = 0.0
+    return np.log(counts / counts.sum(), out=np.full_like(counts, -np.inf), where=counts > 0)
+
+
+@torch.no_grad()
+def exhaustive_ranks(
+    model: GenRec,
+    vocab: SemanticIdVocab,
+    train: dict[int, list[int]],
+    targets: dict[int, int],
+    maxlen_items: int,
+    device: torch.device,
+    alphas: list[float],
+    prior: np.ndarray,
+    extra_history: dict[int, list[int]] | None = None,
+    user_batch: int = 64,
+    cand_chunk: int = 2048,
+) -> tuple[list[int], dict[float, np.ndarray], dict[float, int]]:
+    """Score every catalogue item for every user; return per-alpha rank arrays."""
+    users = list(targets.keys())
+    n_items = len(vocab.item_ids)
+    all_tokens = torch.from_numpy(vocab.item_tokens).long().to(device)  # [n_items+1, L]
+    prior_t = torch.from_numpy(prior).float().to(device)
+
+    ranks = {alpha: np.empty(len(users), dtype=np.int64) for alpha in alphas}
+    # Distinct items appearing in any top-10: the direct measure of whether
+    # debiasing actually reverses the recommendation-diversity collapse.
+    recommended = {alpha: set() for alpha in alphas}
+    start_time = time.time()
+
+    for start in range(0, len(users), user_batch):
+        chunk_users = users[start : start + user_batch]
+        history = torch.from_numpy(
+            build_eval_batch(chunk_users, train, vocab, maxlen_items, extra_history)
+        ).long().to(device)
+        cache = model.build_cache(history)
+
+        scores = torch.empty(len(chunk_users), n_items + 1, device=device)
+        scores[:, 0] = -float("inf")
+        for c0 in range(1, n_items + 1, cand_chunk):
+            c1 = min(c0 + cand_chunk, n_items + 1)
+            candidates = all_tokens[c0:c1].unsqueeze(0).expand(len(chunk_users), -1, -1)
+            scores[:, c0:c1] = model.score_with_cache(cache, candidates)
+
+        # Mask history exactly as the dot-product full-ranking evaluator does.
+        for row, user in enumerate(chunk_users):
+            seen = set(train.get(user, []))
+            if extra_history:
+                seen |= set(extra_history.get(user, []))
+            seen.discard(targets[user])
+            if seen:
+                scores[row, torch.tensor(sorted(seen), device=device)] = -float("inf")
+
+        target_idx = torch.tensor([targets[u] for u in chunk_users], device=device)
+        for alpha in alphas:
+            adjusted = scores - alpha * prior_t.unsqueeze(0) if alpha else scores
+            target_scores = adjusted[torch.arange(len(chunk_users), device=device), target_idx]
+            beaten = (adjusted > target_scores.unsqueeze(1)).sum(dim=1)
+            ranks[alpha][start : start + len(chunk_users)] = beaten.cpu().numpy()
+            top = torch.topk(adjusted, k=10, dim=1).indices.cpu().numpy()
+            recommended[alpha].update(int(i) for i in np.unique(top))
+
+        done = start + len(chunk_users)
+        if done % (user_batch * 20) == 0 or done == len(users):
+            elapsed = time.time() - start_time
+            print(f"  {done}/{len(users)} users, {elapsed:.0f}s elapsed", flush=True)
+
+    return users, ranks, {a: len(v) for a, v in recommended.items()}

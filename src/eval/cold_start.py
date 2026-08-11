@@ -86,17 +86,19 @@ def bucketed_metrics(
 
 
 def format_table(rows: list[dict], models: list[str], k: int = 10) -> str:
-    header = "| bucket | users | " + " | ".join(
-        f"{m} HR@{k} | {m} NDCG@{k}" for m in models
-    ) + " | HR@{} rel. |".format(k)
-    lines = [header, "|" + "---|" * (2 + 2 * len(models) + 1)]
+    """Markdown table; models[0] is the baseline every other column is relative to."""
+    columns = [f"{m} HR@{k}" for m in models] + [f"{m} vs {models[0]}" for m in models[1:]]
+    lines = [
+        "| bucket | users | " + " | ".join(columns) + " |",
+        "|" + "---|" * (2 + len(columns)),
+    ]
     for row in rows:
         cells = [row["bucket"], str(row["n_users"])]
-        for model in models:
-            cells += [f"{row[model][f'HR@{k}']:.4f}", f"{row[model][f'NDCG@{k}']:.4f}"]
-        base, other = row[models[0]][f"HR@{k}"], row[models[1]][f"HR@{k}"]
-        rel = (other - base) / base * 100 if base > 0 else float("nan")
-        cells.append(f"{rel:+.1f}%" if np.isfinite(rel) else "—")
+        cells += [f"{row[m][f'HR@{k}']:.4f}" for m in models]
+        base = row[models[0]][f"HR@{k}"]
+        for model in models[1:]:
+            rel = (row[model][f"HR@{k}"] - base) / base * 100 if base > 0 else float("nan")
+            cells.append(f"{rel:+.1f}%" if np.isfinite(rel) else "—")
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
@@ -109,13 +111,14 @@ def plot_buckets(rows: list[dict], models: list[str], out_path: Path, k: int = 1
 
     labels = [row["bucket"] for row in rows]
     x = np.arange(len(labels))
-    width = 0.38
+    width = 0.8 / len(models)
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
+    fig, ax = plt.subplots(figsize=(4 + 1.6 * len(labels), 4.8))
     for i, model in enumerate(models):
         values = [row[model][f"HR@{k}"] for row in rows]
-        bars = ax.bar(x + (i - 0.5) * width, values, width, label=model)
-        ax.bar_label(bars, fmt="%.3f", fontsize=8, padding=2)
+        offset = (i - (len(models) - 1) / 2) * width
+        bars = ax.bar(x + offset, values, width, label=model)
+        ax.bar_label(bars, fmt="%.3f", fontsize=7, padding=2)
 
     ax.set_xticks(x)
     ax.set_xticklabels([f"{row['bucket']}\n(n={row['n_users']})" for row in rows])
