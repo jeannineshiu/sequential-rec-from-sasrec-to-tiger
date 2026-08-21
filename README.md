@@ -51,6 +51,13 @@ exhaustive scoring gives 0.0240, because the mean true rank of a beam-reported h
 effects arrived with the architecture, uninvited, in the same way the dropout default arrived with
 the framework.
 
+**6. The generative model's deficit is not localized to one repairable stage.** Handing it the
+target's true first semantic code multiplies HR@10 by 12.5x — and still leaves **69% of targets
+outside the top 10 with a median of 51 candidates remaining**. Its level-1 prediction is not lost
+either (median rank 26 of 256 against 128 for chance). An earlier reading of this repo's per-level
+accuracies called the first code the binding constraint; measured in retrieval terms it is
+expensive but not binding, and no better decoder recovers the rest.
+
 ---
 
 ## What's in the repo
@@ -250,7 +257,54 @@ decoder repairs.
 Per-level code accuracy (teacher-forced on the true prefix) is 9.8% / 17.9% / 22.4% / 86.3%.
 Accuracy *rises* with depth as the prefix narrows the choice, and the content-free disambiguation
 token is nearly free — so Beauty's 11.78% collision rate is not the bottleneck it appears to be.
-**The binding constraint is the first code.**
+An earlier version of this README concluded from those four numbers that the binding constraint is
+the first code. The next section measures what that constraint is actually worth, and the
+conclusion does not survive.
+
+### What the first code is worth, and why fixing it would not be enough
+
+Per-level accuracy is a statement about logits. This is the same question asked in retrieval terms:
+hand the model the target's true first *d* codes for free, restrict scoring to the items sharing
+that prefix, and let the model's own scores rank what is left.
+
+| oracle depth | median candidates | HR@10 | NDCG@10 |
+|---|---|---|---|
+| 0 (as it runs) | 12,096 | 0.0250 | 0.0131 |
+| 1 | 51 | **0.3119** | 0.1627 |
+| 2 | 2 | 0.9879 | 0.7765 |
+| 3 | 1 | 1.0000 | 0.9457 |
+
+Not comparable to SASRec's 0.0594 — SASRec gets no oracle. Read it as a decomposition of where the
+probability mass goes wrong. Depth 0 reproduces the reported GenRec row exactly (0.0250) and the
+level-1 top-1 rate below reproduces the teacher-forced 9.8%, from an independent code path.
+
+The first code is expensive: handing it over multiplies HR@10 by **12.5x**. But it is not the
+binding constraint, because handing it over does not rescue the model — **with the right region and
+a median of 51 candidates left, 69% of targets still miss the top 10.** Retrieval only becomes
+reliable at depth 2, where the median candidate set is 2.
+
+Splitting users by how well the model placed level 1 on its own, and then measuring **unaided**
+HR@10, separates "cannot find the region" from "finds it and cannot rank inside it":
+
+| the model's level-1 code | users | unaided HR@10 |
+|---|---|---|
+| top-1 correct | 2,182 | 0.0903 |
+| in its top-10 | 5,291 | 0.0556 |
+| in its top-64 | 8,154 | 0.0083 |
+| outside top-64 | 6,736 | 0.0001 |
+
+**Even when the model's own first choice of level-1 code is correct, unaided HR@10 is 0.0903** —
+so the residual loss sits inside the region, not in reaching it. And the model is not lost:
+the true level-1 code has a median rank of **26 of 256** against 128 for chance, and is in the
+model's top-25 for 49.1% of users. It localizes the neighbourhood well and rarely commits to it.
+
+Both halves are weak, which is consistent with the diversity result above and against the tidier
+story: a better first-code predictor — a wider level-1 codebook, a two-stage decoder, more beam at
+level 1 — would move 0.0250 toward 0.3119 at best, and 0.3119 is still a model that misses two
+targets in three with fifty candidates in front of it.
+
+Reproduce: `uv run python -m scripts.first_code_ceiling` (~55 min; one exhaustive pass serves every
+depth). Full report: [`results/tables/first_code_ceiling.md`](results/tables/first_code_ceiling.md).
 
 ### Beam search is not a faithful ranker
 
@@ -396,6 +450,7 @@ uv run python -m src.train_genrec --config configs/genrec_beauty.yaml
 uv run python -m scripts.compare_atomic_vs_semantic  # bucket table + cold-start figure
 uv run python -m scripts.diagnose_genrec             # diversity + per-level accuracy
 uv run python -m scripts.debias_decoding             # popularity-debiasing α sweep
+uv run python -m scripts.first_code_ceiling          # oracle-prefix ladder + level-1 localization
 uv run python -m scripts.seed_variance               # noise floor + margin re-check
 
 uv run python -m src.export_results   # rebuild results/tables/master.md + figures
