@@ -23,9 +23,9 @@ import numpy as np
 import torch
 import yaml
 
-from src.beam_search import batched_beam_search
 from src.data.genrec_dataset import build_eval_batch
 from src.eval.cold_start import DEFAULT_BUCKETS, bucket_of, item_train_frequency
+from src.eval.generative import exhaustive_ranks, log_prior
 from src.semantic_ids.vocab import SemanticIdVocab
 from src.train import make_score_fn, pick_device
 from src.utils import load_processed
@@ -105,7 +105,7 @@ def per_level_accuracy(model, vocab, train, test, extra, maxlen_items, device, b
     return correct / total
 
 
-def main(sasrec_config: str, genrec_config: str, k: int) -> None:
+def main(sasrec_config: str, genrec_config: str, k: int, alphas: list[float]) -> None:
     device = pick_device()
     with open(sasrec_config) as f:
         sasrec_cfg = yaml.safe_load(f)
@@ -130,17 +130,28 @@ def main(sasrec_config: str, genrec_config: str, k: int) -> None:
     users, top_a = sasrec_topk(
         sasrec, train, test, extra, n_items, sasrec_cfg["model"]["maxlen"], k, device
     )
-    print("GenRec top-10 ...")
-    history = build_eval_batch(users, train, vocab, genrec_cfg["model"]["maxlen"], extra)
-    top_b, _ = batched_beam_search(genrec, vocab, history, device, beam_size=max(k, 20), n_return=k)
+    # Exhaustive rather than beam-ranked. A beam-20 top-10 can only contain items
+    # reachable through 20 of the 256 first codes, so reading coverage off it
+    # measures the beam's width as much as the model's diversity -- which is how
+    # an earlier version of this table reported 839 distinct items.
+    print("GenRec top-10 (exhaustive) ...")
+    users_b, _, topk = exhaustive_ranks(
+        genrec, vocab, train, test,
+        maxlen_items=genrec_cfg["model"]["maxlen"], device=device,
+        alphas=alphas, prior=log_prior(frequency), extra_history=extra, topk=k,
+    )
+    assert users == users_b, "the two models were scored on different user orderings"
 
-    profiles = [
-        popularity_profile("SASRec (atomic)", top_a, frequency),
-        popularity_profile("GenRec (semantic)", top_b, frequency),
-    ]
+    profiles = [popularity_profile("SASRec (atomic)", top_a, frequency)]
+    for alpha in alphas:
+        label = "GenRec (semantic)" + (f", debiased a={alpha:g}" if alpha else "")
+        profiles.append(popularity_profile(label, topk[alpha], frequency))
 
     lines = [
         "# What the two models actually recommend — Amazon Beauty, test top-10",
+        "",
+        "Both models ranked exhaustively over the whole catalogue, so no beam pruning is",
+        "constraining what can appear in a top-10 on either side.",
         "",
         "| model | distinct items in all top-10s | median train freq | mean | % head | % torso | % tail | % unseen |",
         "|---|---|---|---|---|---|---|---|",
@@ -184,5 +195,6 @@ if __name__ == "__main__":
     parser.add_argument("--sasrec-config", type=str, default="configs/sasrec_beauty.yaml")
     parser.add_argument("--genrec-config", type=str, default="configs/genrec_beauty.yaml")
     parser.add_argument("--k", type=int, default=10)
+    parser.add_argument("--alphas", type=float, nargs="+", default=[0.0, 1.0])
     args = parser.parse_args()
-    main(args.sasrec_config, args.genrec_config, args.k)
+    main(args.sasrec_config, args.genrec_config, args.k, args.alphas)

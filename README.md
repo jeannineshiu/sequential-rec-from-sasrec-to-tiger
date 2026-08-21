@@ -9,8 +9,9 @@ Full plan: [`sequential-rec-project-plan.md`](sequential-rec-project-plan.md)
 Execution checklist: [`EXECUTION_PLAN.md`](EXECUTION_PLAN.md)
 Debugging trail: [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md)
 BERT4Rec controversy analysis: [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md)
+Write-up: [`docs/medium-draft.md`](docs/medium-draft.md) · [`docs/interview-prep.md`](docs/interview-prep.md)
 
-## Status: Weeks 1–5 done — Week 6 experiments done (write-up pending)
+## Status: Weeks 1–6 done
 
 Week 4 ran four protocol-matched models at 200 epochs on ML-1M. The finding is not about
 either architecture: **BERT4Rec's win over SASRec on this dataset is a baseline-configuration
@@ -97,8 +98,8 @@ one embedding or a sequence of four semantic tokens.
 | test, k=10 | sampled HR@10 | sampled NDCG@10 | full HR@10 | full NDCG@10 | parameters |
 |---|---|---|---|---|---|
 | SASRec (atomic) | **0.5097** | **0.3453** | **0.0594** | **0.0303** | 828,352 |
-| GenRec (semantic) | 0.3621 | 0.2235 | 0.0251 | 0.0131 | **113,472** |
-| relative | −28.96% | −35.27% | −57.7% | −56.8% | **13.7%** |
+| GenRec (semantic) | 0.3621 | 0.2235 | 0.0250 | 0.0131 | **113,472** |
+| relative | −28.96% | −35.27% | −57.8% | −56.6% | **13.7%** |
 
 Both full-ranking columns rank exhaustively over the whole catalogue. **An earlier version of
 this table ranked GenRec by beam search and reported −44.6%; that was too generous to the
@@ -130,10 +131,15 @@ prior at ranking time — same model, same weights, different scoring rule.
 | bucket (target's train frequency) | users | SASRec | GenRec | GenRec debiased α=1 |
 |---|---|---|---|---|
 | unseen (0) | 138 | 0.0000 | 0.0072 | **0.0725** |
-| tail (1–4) | 4,594 | **0.0185** | 0.0026 | 0.0141 |
-| torso (5–19) | 9,539 | **0.0427** | 0.0060 | 0.0080 |
-| head (20+) | 8,092 | **0.1033** | 0.0608 | 0.0137 |
-| overall | 22,363 | **0.0594** | 0.0251 | 0.0117 |
+| tail (1–4) | 4,594 | **0.0185** | 0.0026 | 0.0144 |
+| torso (5–19) | 9,539 | **0.0427** | 0.0060 | 0.0081 |
+| head (20+) | 8,092 | **0.1033** | 0.0606 | 0.0138 |
+| overall | 22,363 | **0.0594** | 0.0250 | 0.0118 |
+
+All three columns now come from a **single** scoring run over identical users, rather than
+from two runs stitched together as an earlier version of this table did. The numbers moved
+by at most one unit in the last digit (GenRec overall 0.0251 → 0.0250), so the stitching was
+not distorting anything — but it is no longer something a reader has to take on trust.
 
 **As trained, the gap widens as items get rarer — the opposite of the prediction.**
 
@@ -146,20 +152,32 @@ the head where most of the traffic is.
 
 ### Why: recommendation diversity collapses
 
-| model | distinct items across all top-10s | median train freq | % head | % torso | % tail |
-|---|---|---|---|---|---|
-| SASRec (atomic) | **9,221** (76% of catalogue) | 22 | 54.2% | 42.1% | 3.7% |
-| GenRec (semantic) | **1,749** (14%) | 84 | 84.7% | 13.1% | 2.2% |
+| model | distinct items across all top-10s | median train freq | % head | % torso | % tail | % unseen |
+|---|---|---|---|---|---|---|
+| SASRec (atomic) | **9,221** (76% of catalogue) | 22 | 54.2% | 42.1% | 3.7% | 0.0% |
+| GenRec (semantic) | **1,749** (14%) | 63 | 74.1% | 21.3% | 4.6% | 0.0% |
+| GenRec debiased α=1 | **1,976** (16%) | 5 | 7.0% | 44.8% | 36.6% | 11.6% |
 
 GenRec's entire output covers 14% of the catalogue. Generation collapsed onto a small set of
 high-probability code sequences, and the tail result is a symptom of that.
 
-But the mechanism is only *partly* the popularity prior. If the prior were the whole story,
-removing it would restore diversity — and debiasing moves coverage only 1,749 → 1,976, a 13%
-gain on a number that needs 5x to match SASRec. Debiasing trades head accuracy for tail
-accuracy along a fixed frontier rather than widening it. Something about learning to emit four
-codes leaves the model with far less resolution over the catalogue than 12,101 free embeddings
-have, and that is not a scoring-time artifact a better decoder repairs.
+The debiased row is what pins the mechanism down, and it cuts against the tidy explanation.
+Debiasing changes *what* gets recommended enormously — the head share falls 74.1% → 7.0%, the
+median recommended item goes from 63 training appearances to 5, and 11.6% of slots go to items
+never seen in training at all. That is a scoring rule doing exactly what it was asked to do.
+And yet coverage moves only **1,749 → 1,976**, a 13% gain on a number that needs 5x to match
+SASRec.
+
+So the popularity prior is not the whole story. Removing it slides the model along a fixed
+frontier — trading head accuracy for tail accuracy, which is why overall HR@10 halves — without
+making it more *discriminative*. Something about learning to emit four codes leaves the model
+with far less resolution over the catalogue than 12,101 free embeddings have, and that is not a
+scoring-time artifact a better decoder repairs.
+
+**An earlier version of this table read 839 distinct items / 84.7% head for GenRec.** Those came
+from a beam-20 top-10, which can only contain items reachable through the 20 first codes the beam
+kept — so it was measuring the beam's width as much as the model's diversity. The collapse is
+real either way; it is about half as severe as the beam made it look.
 
 ### Correction: beam search was flattering the generative model
 
@@ -186,8 +204,11 @@ across the four levels. Accuracy *rises* with depth as the prefix narrows the ch
 content-free disambiguation token is nearly free — so Beauty's 11.78% collision rate is not
 the bottleneck it appeared to be. The binding constraint is the first code.
 
-Reproduce: `uv run python -m scripts.compare_atomic_vs_semantic` and
-`uv run python -m scripts.diagnose_genrec`.
+Reproduce: `uv run python -m scripts.compare_atomic_vs_semantic` (the bucket table and
+figure), `uv run python -m scripts.diagnose_genrec` (diversity profile and per-level
+accuracy), `uv run python -m scripts.debias_decoding` (the α sweep). All three score every
+catalogue item for every user, so each takes ~55 min on an M-series GPU. Add `--beam` to the
+first to reproduce the superseded beam-ranked numbers.
 
 ### Ablations (ML-1M, test set, k=10 — **all rows at 100 epochs**, see REPRODUCTION_LOG.md)
 
@@ -312,6 +333,12 @@ uv run python -m src.semantic_ids.embed --dataset ml-1m
 uv run python -m src.semantic_ids.rq_kmeans --dataset ml-1m
 uv run python -m scripts.inspect_semantic_ids --dataset ml-1m   # quality report
 uv run python -m src.train_genrec --config configs/genrec_beauty.yaml
+
+# Week 6: the atomic-vs-semantic comparison. Each of these scores all 12,101 items for
+# all 22,363 test users, so budget ~55 min apiece on an M-series GPU.
+uv run python -m scripts.compare_atomic_vs_semantic  # bucket table + cold-start figure
+uv run python -m scripts.diagnose_genrec             # diversity + per-level accuracy
+uv run python -m scripts.debias_decoding             # the popularity-debiasing alpha sweep
 
 uv run pytest tests/
 ```

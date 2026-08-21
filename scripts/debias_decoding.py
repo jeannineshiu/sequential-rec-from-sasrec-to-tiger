@@ -26,6 +26,7 @@ Writes results/tables/debias_decoding.md.
 import argparse
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 from src.eval.cold_start import DEFAULT_BUCKETS, bucketed_metrics, item_train_frequency
@@ -57,7 +58,7 @@ def main(genrec_config: str, alphas: list[float], k: int, limit: int | None) -> 
     frequency = item_train_frequency(train, n_items)
     prior = log_prior(frequency)
 
-    users, ranks, coverage = exhaustive_ranks(
+    users, ranks, topk = exhaustive_ranks(
         model, vocab, train, test, cfg["model"]["maxlen"], device, alphas, prior, extra
     )
 
@@ -80,7 +81,7 @@ def main(genrec_config: str, alphas: list[float], k: int, limit: int | None) -> 
         }
         cells = [f"{alpha:g}", f"{overall[f'HR@{k}']:.4f}", f"{overall[f'NDCG@{k}']:.4f}"]
         cells += [f"{rows[b]['g'][f'HR@{k}']:.4f}" for b, _, _ in DEFAULT_BUCKETS]
-        cells.append(f"{coverage[alpha]:,}")
+        cells.append(f"{len(np.unique(topk[alpha])):,}")
         lines.append("| " + " | ".join(cells) + " |")
 
     out = Path("results/tables/debias_decoding.md")

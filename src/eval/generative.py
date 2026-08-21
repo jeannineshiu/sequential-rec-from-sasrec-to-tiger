@@ -200,17 +200,24 @@ def exhaustive_ranks(
     extra_history: dict[int, list[int]] | None = None,
     user_batch: int = 64,
     cand_chunk: int = 2048,
-) -> tuple[list[int], dict[float, np.ndarray], dict[float, int]]:
-    """Score every catalogue item for every user; return per-alpha rank arrays."""
+    topk: int = 10,
+) -> tuple[list[int], dict[float, np.ndarray], dict[float, np.ndarray]]:
+    """Score every catalogue item for every user.
+
+    Returns per-alpha rank arrays and the per-alpha top-k item matrices. The
+    top-k matrices are what any recommendation-diversity question has to be
+    answered from: a beam-ranked top-k only contains items the beam kept, so
+    it understates coverage by construction.
+    """
     users = list(targets.keys())
     n_items = len(vocab.item_ids)
     all_tokens = torch.from_numpy(vocab.item_tokens).long().to(device)  # [n_items+1, L]
     prior_t = torch.from_numpy(prior).float().to(device)
 
     ranks = {alpha: np.empty(len(users), dtype=np.int64) for alpha in alphas}
-    # Distinct items appearing in any top-10: the direct measure of whether
-    # debiasing actually reverses the recommendation-diversity collapse.
-    recommended = {alpha: set() for alpha in alphas}
+    # The top-k items themselves, not just how many were distinct: the
+    # popularity profile of what gets recommended is read off these.
+    recommended = {alpha: np.empty((len(users), topk), dtype=np.int64) for alpha in alphas}
     start_time = time.time()
 
     for start in range(0, len(users), user_batch):
@@ -242,12 +249,12 @@ def exhaustive_ranks(
             target_scores = adjusted[torch.arange(len(chunk_users), device=device), target_idx]
             beaten = (adjusted > target_scores.unsqueeze(1)).sum(dim=1)
             ranks[alpha][start : start + len(chunk_users)] = beaten.cpu().numpy()
-            top = torch.topk(adjusted, k=10, dim=1).indices.cpu().numpy()
-            recommended[alpha].update(int(i) for i in np.unique(top))
+            top = torch.topk(adjusted, k=topk, dim=1).indices.cpu().numpy()
+            recommended[alpha][start : start + len(chunk_users)] = top
 
         done = start + len(chunk_users)
         if done % (user_batch * 20) == 0 or done == len(users):
             elapsed = time.time() - start_time
             print(f"  {done}/{len(users)} users, {elapsed:.0f}s elapsed", flush=True)
 
-    return users, ranks, {a: len(v) for a, v in recommended.items()}
+    return users, ranks, recommended

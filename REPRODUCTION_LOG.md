@@ -861,6 +861,12 @@ reported as measured and not spun.
 
 ### Why: the model recommends 839 items out of 12,101
 
+> **Superseded — see 2026-08-19.** The GenRec row below is a beam-20 profile, and a
+> beam-ranked top-10 can only contain items reachable through the 20 first codes the beam
+> kept. Exhaustively, GenRec covers **1,749** items (14%) at median frequency 63 and 74.1%
+> head. The collapse is real but about half as severe as this table makes it look. Kept as
+> written because the reasoning that follows was done against these numbers.
+
 | model | distinct items across all top-10s | median train freq | % head | % torso | % tail |
 |---|---|---|---|---|---|
 | SASRec (atomic) | **9,221** | 22 | 54.2% | 42.1% | 3.7% |
@@ -1024,3 +1030,106 @@ correctness problem — both used identical users, masking, and metric code.
 Not done: README rewrite against the corrected numbers, and the Medium/interview write-ups.
 
 ---
+
+## Week 6 (cont.) — closing the provenance gap, and two tables that were still lying
+
+**2026-08-19**
+
+### The generated tables had not been regenerated
+
+The beam correction rewrote the README and the scripts, but not the artifacts in
+`results/tables/`. Two of them were still the pre-correction beam output:
+
+- `atomic_vs_semantic.md` still carried the −44.6% overall figure **and the sentence that
+  the correction had just disproved** — "GenRec ranks by constrained beam search (beam 20),
+  which can only cost the generative side."
+- `genrec_diagnosis.md` reported GenRec covering **839** distinct items, which is a beam-20
+  artifact: a beam-ranked top-10 can only contain items reachable through the 20 first
+  codes the beam kept, so reading catalogue coverage off it measures the beam's width as
+  much as the model's diversity.
+
+The README had partly worked around this by hand — it quotes the exhaustive 1,749 for
+coverage — but its median-frequency and %head/%torso/%tail columns still came from the
+839-item beam profile. So the repo's headline claim ("script-generated, not hand-copied")
+was true of `master.md` and not of these.
+
+`compare_atomic_vs_semantic.py` had already been switched to exhaustive scoring by default;
+it had simply never been re-run. `diagnose_genrec.py` had not been switched at all.
+
+**Hypothesis:** the corrected numbers hold and only the artifacts are stale.
+**Change:** re-ran the comparison; changed `exhaustive_ranks` to return the per-alpha top-k
+matrices rather than just a distinct-item count, so the diversity profile can be computed
+from the same exhaustive pass instead of a separate beam pass; updated all three callers.
+
+### Result: the two-run stitch was not distorting anything
+
+The corrected README table came from two separate full-catalogue runs (α=0 from one,
+α=1 from another) — flagged at the time as a provenance wrinkle rather than a correctness
+problem. One run producing all three columns over identical users now confirms that:
+
+| Amazon Beauty, full ranking, HR@10 | stitched | single pass |
+|---|---|---|
+| GenRec overall | 0.0251 | 0.0250 |
+| GenRec head | 0.0608 | 0.0606 |
+| GenRec debiased α=1, overall | 0.0117 | 0.0118 |
+| GenRec debiased α=1, tail | 0.0141 | 0.0144 |
+| GenRec debiased α=1, unseen | 0.0725 | 0.0725 |
+
+At most one unit in the last digit. The overall loss is −57.8% rather than −57.7%; the
+unseen-bucket result, which is the only place the cold-start claim survives, is identical.
+Every table and both write-ups now use the single-pass numbers.
+
+### The diversity profile was more distorted than the coverage number
+
+Re-running `diagnose_genrec` exhaustively moved more than the headline count:
+
+| GenRec top-10 profile | beam 20 | exhaustive |
+|---|---|---|
+| distinct items | 839 (7%) | **1,749 (14%)** |
+| median train freq | 84 | 63 |
+| % head | 84.7% | 74.1% |
+| % tail | 2.2% | 4.6% |
+
+The beam was overstating the collapse roughly 2x on every axis — which follows, since it
+can only return items behind 20 of 256 first codes and those 20 are the highest-probability
+ones. The README had been quoting the exhaustive 1,749 next to the beam's 84.7% head share,
+so its diversity table was mixing two sources. Now single-sourced.
+
+The debiased row is new, and it sharpens the conclusion rather than softening it:
+
+| | median train freq | % head | % tail | % unseen | distinct |
+|---|---|---|---|---|---|
+| GenRec α=0 | 63 | 74.1% | 4.6% | 0.0% | 1,749 |
+| GenRec α=1 | **5** | **7.0%** | **36.6%** | **11.6%** | 1,976 |
+
+Debiasing transforms *what* is recommended — head share collapses by an order of magnitude,
+and 11.6% of slots go to items with zero training interactions — while coverage barely
+moves. That is as clean a demonstration as this project has that the popularity prior is not
+the binding constraint: the scoring rule can be pushed as far as one likes toward rare items
+without the model becoming able to *distinguish* more of them. The frontier is fixed by the
+representation, not by the decoder.
+
+**Cost note:** each of these scripts scores 12,101 items for 22,363 users and takes ~55 min
+on MPS. The python process sits at ~2% CPU throughout because the work is on the GPU — which
+looks exactly like a hung process, and I killed one run on that misreading before checking
+that it was simply not printing (progress was going into a `tail -40` buffer). Pipe long runs
+to a file and poll the file, rather than through `tail`.
+
+### Week 6 write-ups
+
+`docs/medium-draft.md`, `docs/linkedin-post.md`, `docs/interview-prep.md`. The Medium draft
+does not follow the structure in EXECUTION_PLAN (chronological walk through the six weeks);
+it is organised around the three times a control passed while the thing it was controlling
+for was breaking a conclusion — Week 3's epoch budget, Week 4's dropout default, Week 6's
+beam-width sweep. That is the one thread running through the whole project, and it survives
+the fact that the headline generative result is negative.
+
+The interview one-liner from the plan's Appendix D promised "quantified exactly when semantic
+IDs beat atomic IDs (cold-start) and when they don't." It was written before the experiment
+and the experiment failed in that direction. Rewritten, with the old version kept in the doc
+and explicitly marked do-not-use.
+
+**Not done:** Railway deployment (optional, and already below RQ-VAE in the Appendix C cut
+order), and the training-budget curve, which remains the project's largest gap.
+
+

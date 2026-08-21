@@ -197,13 +197,14 @@ flowchart LR
 
 #### Day 4–5:Serving demo + README(約 4h)
 - [x] `serving/app.py`:FastAPI — 兩模型並排 top-10,附 semantic ID / 頻次 / bucket;`/random_user` 可直接取真實歷史
-- [ ] README 重寫:復現對照表置頂 → 方法論(評估協定討論)→ 招牌兩圖 → 限制誠實列出 → 復現指令(`uv run ...` 一鍵)
-- [ ] (Optional)Railway 部署
+- [x] README 重寫:復現對照表置頂 → 方法論(評估協定討論)→ 招牌兩圖 → 限制誠實列出 → 復現指令(`uv run ...` 一鍵);beam 更正後全表重寫,舊數字保留在更正段落
+- [~] (Optional)Railway 部署 — 未做,按附錄 C 砍序本來就排在 RQ-VAE 之後
+- [x] 收尾:`results/tables/` 兩張表仍是 beam 版本(腳本已改窮舉但沒重跑),重新產生;`diagnose_genrec` 的多樣性表改走窮舉,839 → 實測值
 
 #### Day 6–7:Medium 文章(約 4h)
-- [ ] 結構:為什麼復現 → SASRec 對齊與坑 → BERT4Rec 爭議圖 → Semantic ID 改造 → cold-start 發現 → 給後人的 checklist
-- [ ] LinkedIn 短文版
-- [ ] 面試話術包:附錄 D 一句話 + L1/L2/L3 問答各寫 3 題自問自答,存 `docs/interview-prep.md`
+- [x] 結構:為什麼復現 → SASRec 對齊與坑 → BERT4Rec 爭議圖 → Semantic ID 改造 → cold-start 發現 → 給後人的 checklist → `docs/medium-draft.md`(主軸改為「三次跑錯的對照組」,比單純流水帳更有記憶點)
+- [x] LinkedIn 短文版 → `docs/linkedin-post.md`(三個切入點變體)
+- [x] 面試話術包:附錄 D 一句話 + L1/L2/L3 問答 → `docs/interview-prep.md`;一句話定位已改寫,原版承諾了 cold-start 會贏而實驗是反向失敗
 
 **Week 6 產出檢查:** ✅ 主實驗 + cold-start 結果 ✅ demo ✅ README ✅ Medium 初稿
 

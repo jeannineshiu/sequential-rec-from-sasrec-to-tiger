@@ -1,9 +1,13 @@
 # What the two models actually recommend — Amazon Beauty, test top-10
 
+Both models ranked exhaustively over the whole catalogue, so no beam pruning is
+constraining what can appear in a top-10 on either side.
+
 | model | distinct items in all top-10s | median train freq | mean | % head | % torso | % tail | % unseen |
 |---|---|---|---|---|---|---|---|
 | SASRec (atomic) | 9,221 | 22 | 42.7 | 54.2% | 42.1% | 3.7% | 0.0% |
-| GenRec (semantic) | 839 | 84 | 111.8 | 84.7% | 13.1% | 2.2% | 0.0% |
+| GenRec (semantic) | 1,749 | 63 | 97.3 | 74.1% | 21.3% | 4.6% | 0.0% |
+| GenRec (semantic), debiased a=1 | 1,976 | 5 | 8.9 | 7.0% | 44.8% | 36.6% | 11.6% |
 
 Catalogue size: 12,101 items.
 
