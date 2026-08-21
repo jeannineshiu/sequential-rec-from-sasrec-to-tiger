@@ -1,6 +1,9 @@
+> **Historical document.** The pre-registered acceptance criteria and execution order,
+> kept unedited. Not a status report — see [`../README.md`](../README.md) for results.
+
 # Sequential Rec 專案 — 詳細執行計畫(Execution Plan)
 
-> 本文件是 [`sequential-rec-project-plan.md`](sequential-rec-project-plan.md) 的可執行展開版。
+> 本文件是 [`original-plan.md`](original-plan.md) 的可執行展開版。
 > 原計畫定義「做什麼、為什麼」;本文件定義「怎麼做、按什麼順序、做完怎麼驗收」。
 > 使用方式:每完成一項勾掉 checkbox;每週結束對照「驗收標準」決定是否進入下一週。
 

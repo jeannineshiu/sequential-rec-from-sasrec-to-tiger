@@ -1,3 +1,11 @@
+> **Historical document.** This is the plan as written *before* any experiment ran, kept
+> unedited as a record of what success was defined to be in advance. It is not a status
+> report and several of its predictions did not survive contact with the data — the
+> BERT4Rec comparison, the cold-start hypothesis, and the beam-search evaluation all
+> resolved differently. For what the project actually found, see
+> [`../README.md`](../README.md); for how it got there,
+> [`../REPRODUCTION_LOG.md`](../REPRODUCTION_LOG.md).
+
 # Sequential Recommendation 復現與現代化專案 — 完整執行計畫
 
 **專案名稱(建議 repo 名):** `sequential-rec-from-sasrec-to-tiger`
