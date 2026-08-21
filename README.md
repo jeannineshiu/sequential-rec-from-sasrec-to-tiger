@@ -31,13 +31,20 @@ to +0.61% on sampled HR@10 diverge by **+40% HR@10 / +53% NDCG@10** under full-c
 model selection done on the sampled protocol alone is selecting on a metric that does not preserve
 ordering.
 
-**3. Semantic IDs trade accuracy for compression and reach, not for accuracy.** On Beauty, the
+**3. Most of that divergence is the training objective, and the sampled protocol is blind to it.**
+A loss-only ablation — full-catalog softmax instead of BCE against one sampled negative, nothing
+else touched — recovers **+22.54% full HR@10 / +32.29% full NDCG@10**, accounting for 56% and 60%
+of the cross-framework gap. On sampled HR@10 the same change measures **−0.38%, inside seed noise**.
+The objective is worth a fifth of the full-ranking score and is invisible to the protocol the
+original paper evaluated with.
+
+**4. Semantic IDs trade accuracy for compression and reach, not for accuracy.** On Beauty, the
 generative model reaches 71% of SASRec's sampled HR@10 while running on **13.7% of the parameters**
 (12,101 item embeddings collapse into 782 token embeddings). It also retrieves items that are
 structurally unreachable for an atomic embedding table: on items never seen in training, 7.25%
 HR@10 against SASRec's 0.00% (Fisher exact, one-sided *p* = 0.0008).
 
-**4. Swapping item representations silently swaps scoring rules — and that is where the damage
+**5. Swapping item representations silently swaps scoring rules — and that is where the damage
 is.** A generative model ranks by `P(item | history)`, which carries a popularity prior; a dot
 product does not. Constrained beam search compounds it: beam-20 reports HR@10 0.0407 where
 exhaustive scoring gives 0.0240, because the mean true rank of a beam-reported hit is 167. Both
@@ -129,8 +136,47 @@ the BERT4Rec reproducibility literature describes. Claim-by-claim analysis:
 +40% / +53% for a pair that agrees to +0.61% on sampled HR@10. The divergence grows monotonically
 with how much the metric cares about *where* in the ranking the target lands, which points at the
 training objective — full-catalog cross-entropy (RecBole) vs BCE against one sampled negative (this
-repo, per the paper). Consistent with the pattern, but untested: no loss-only ablation was run.
-This is the largest unexplained effect in the project.
+repo, per the paper). The next section tests that directly.
+
+### The training objective, isolated
+
+The two frameworks' SASRecs differ in the loss *and* in width (64 vs 50), heads (2 vs 1), inner
+size and batch size (2048 vs 128), so the cross-framework gap cannot attribute anything on its own.
+This ablation changes the objective and nothing else: same model, same seed, same 200-epoch
+schedule, same data, same frozen evaluation negatives, with `train.loss_type: ce` swapping BCE for
+a softmax over the full catalog.
+
+| ML-1M, test, k=10 | BCE (control) | CE | Δ | RecBole | residual (RecBole vs CE) |
+|---|---|---|---|---|---|
+| sampled HR@10 | 0.8190 | 0.8159 | ~ −0.38% | 0.8240 | +0.99% |
+| sampled NDCG@10 | 0.5948 | 0.6133 | +3.10% | 0.6389 | +4.17% |
+| full HR@10 | 0.2475 | **0.3033** | **+22.54%** | 0.3467 | +14.30% |
+| full NDCG@10 | 0.1322 | **0.1749** | **+32.29%** | 0.2029 | +16.06% |
+
+`~` marks a difference inside the seed-noise floor. **The objective alone reproduces the whole
+shape of the cross-framework gap**: nothing on sampled HR@10, a large gain on full ranking, and
+NDCG gaining more than HR — the same monotone-in-rank-sensitivity pattern, from a single changed
+line. It accounts for **56% of the full HR@10 gap and 60% of the full NDCG@10 gap**.
+
+It does not account for all of it. The residual (+14.30% / +16.06%) is four to five times the
+full-ranking noise floor, so it is real, and what remains on the table is architecture and batch
+size. The suspect named in earlier versions of this README was the right one, but it was never the
+only one.
+
+Two things worth taking from this beyond the attribution. **Sampled HR@10 cannot see this at all** —
+the two objectives tie on it (−0.38%, inside noise) while diverging by 22.54% on full ranking.
+A model selected on sampled HR@10 would call these interchangeable. And **CE converges far faster**:
+it reaches BCE's best-over-200-epochs validation NDCG@10 at **epoch 36**, a 5.6x saving, at 16.9
+s/epoch against 6.9 (the full-catalog softmax is ~2.4x more expensive per epoch, so the saving is
+real but roughly 2.3x rather than 5.6x in wall-clock).
+
+Caveat on budget: both arms are still improving at epoch 200 (best validation at epoch 195 for BCE,
+198 for CE), so this is a matched-budget comparison, not a converged one. Given CE's faster
+trajectory, a longer budget would if anything favor BCE by letting it catch up — the measured gap
+is the conservative direction.
+
+Reproduce: `uv run python -m src.train --config configs/ablation/sasrec_ml1m_loss_ce.yaml`
+(~56 min on an M-series GPU).
 
 ### Atomic vs semantic IDs — Amazon Beauty, test, k=10
 
@@ -332,6 +378,9 @@ uv run python -m src.baselines --data-dir data/processed/ml-1m
 uv run python -m src.train --config configs/sasrec_ml1m.yaml
 uv run python -m src.train --config configs/sasrec_beauty.yaml
 
+# Loss-only ablation: full-catalog softmax instead of BCE-with-one-negative (~56 min)
+uv run python -m src.train --config configs/ablation/sasrec_ml1m_loss_ce.yaml
+
 # Semantic IDs (Beauty metadata is an extra ~99MB)
 uv run python -m src.data.download --dest data/raw --dataset beauty --with-meta
 uv run python -m src.semantic_ids.embed     --dataset ml-1m
@@ -364,9 +413,16 @@ sandboxes via `scripts/daytona_*.py`, with result recovery for interrupted runs.
 Kept current, on the principle that a mixed result reported is worth more than a clean result
 implied.
 
-- **The full-ranking divergence between the two SASRecs is unexplained.** +40% HR@10 / +53% NDCG@10
-  from implementations agreeing to +0.61% on sampled HR@10. Full-catalog CE vs sampled BCE is the
-  obvious suspect and fits the pattern, but no loss-only ablation was run.
+- **40% of the full-ranking divergence between the two SASRecs is still unattributed.** The
+  loss-only ablation accounts for 56% of the HR@10 gap and 60% of the NDCG@10 gap; the residual
+  (+14.30% / +16.06%) is four to five times the noise floor and therefore real. Width, head count,
+  inner size and batch size all remain uncontrolled, and no ablation separates them.
+- **The loss ablation is matched-budget, not converged.** Both arms are still improving at epoch
+  200. CE's advantage is measured where BCE has not finished training, which understates BCE — the
+  conservative direction for the claim being made, but not a converged comparison.
+- **The loss ablation is one seed, and CE ran at a learning rate tuned for BCE.** Both arms share
+  seed 42 and lr 0.001. CE winning at a rate it was never tuned for makes the result a lower bound
+  rather than an artifact, but no lr sweep or second seed was run.
 - **No training-budget curve.** Only the 1× (200-epoch) point exists; 4× and 10× were cut on cost
   (~58 GPU-hours per model for the full trajectory). The scaling claim at the heart of the BERT4Rec
   controversy is therefore untested here.

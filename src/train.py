@@ -106,6 +106,15 @@ def run(
     )
     bce = torch.nn.BCEWithLogitsLoss(reduction="none")
 
+    # 'bce' is SASRec as published: one sampled negative per position. 'ce' is a
+    # softmax over the whole catalog, which is what RecBole trains with. The two
+    # frameworks' SASRecs agree to +0.61% on sampled HR@10 and diverge by +40% on
+    # full ranking, and this is the suspect; it is a config switch so the
+    # comparison is loss-only, with the sampler, data and schedule untouched.
+    loss_type = cfg["train"].get("loss_type", "bce")
+    if loss_type not in ("bce", "ce"):
+        raise ValueError(f"unknown train.loss_type: {loss_type} (expected 'bce' or 'ce')")
+
     max_epochs = max_epochs_override or cfg["train"]["max_epochs"]
     patience = cfg["train"]["early_stop_patience"]
     k = cfg["eval"]["k"]
@@ -140,12 +149,26 @@ def run(
                 pos_seqs = pos_seqs.to(device)
                 neg_seqs = neg_seqs.to(device)
 
-                pos_logits, neg_logits = model(input_seqs, pos_seqs, neg_seqs)
-                valid_mask = (pos_seqs != 0).float()
+                if loss_type == "ce":
+                    # Padded positions carry target 0, which ignore_index drops, so
+                    # the loss averages over exactly the same positions BCE's
+                    # valid_mask selects. neg_seqs goes unused: a full-catalog
+                    # softmax has no sampled negatives. The sampler still runs and
+                    # consumes its RNG stream identically, so the only thing that
+                    # changes between the two arms is the objective.
+                    logits = model.logits_full_catalog(input_seqs)
+                    loss = torch.nn.functional.cross_entropy(
+                        logits.reshape(-1, logits.shape[-1]),
+                        pos_seqs.reshape(-1),
+                        ignore_index=0,
+                    )
+                else:
+                    pos_logits, neg_logits = model(input_seqs, pos_seqs, neg_seqs)
+                    valid_mask = (pos_seqs != 0).float()
 
-                pos_loss = bce(pos_logits, torch.ones_like(pos_logits))
-                neg_loss = bce(neg_logits, torch.zeros_like(neg_logits))
-                loss = ((pos_loss + neg_loss) * valid_mask).sum() / valid_mask.sum()
+                    pos_loss = bce(pos_logits, torch.ones_like(pos_logits))
+                    neg_loss = bce(neg_logits, torch.zeros_like(neg_logits))
+                    loss = ((pos_loss + neg_loss) * valid_mask).sum() / valid_mask.sum()
 
                 optimizer.zero_grad()
                 loss.backward()

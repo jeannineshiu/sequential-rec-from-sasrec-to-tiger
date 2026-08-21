@@ -161,6 +161,24 @@ class SASRec(nn.Module):
         neg_logits = (seq_out * self.item_emb(neg_seqs)).sum(-1)
         return pos_logits, neg_logits
 
+    def logits_full_catalog(self, input_seqs: torch.Tensor) -> torch.Tensor:
+        """Training forward for the cross-entropy objective: [B, T, n_items + 1].
+
+        Where `forward` scores one positive and one sampled negative per position,
+        this scores the *entire* catalog at every position, which is what a softmax
+        cross-entropy loss needs. Column 0 is the padding slot and is pushed to -inf
+        so it can never take probability mass -- the counterpart of the evaluators'
+        `scores[:, 0] = -inf`, without which the softmax would normalize over a
+        non-item.
+
+        Memory is [B, T, n_items] per batch and dominates the CE training step, so
+        callers on small devices trade batch size for it rather than truncating T.
+        """
+        seq_out = self.encode(input_seqs)  # [B, T, D]
+        logits = seq_out @ self.item_emb.weight.T  # [B, T, V]
+        logits[..., 0] = float("-inf")
+        return logits
+
     def score(self, input_seqs: torch.Tensor, candidate_items: torch.Tensor) -> torch.Tensor:
         """input_seqs: [B, T]; candidate_items: [B, C] -> scores [B, C]."""
         final_hidden = self.encode(input_seqs)[:, -1, :]  # [B, D]

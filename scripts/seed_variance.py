@@ -53,7 +53,18 @@ CLAIMED_MARGINS = [
     ("SASRec vs BERT4Rec at matched dropout, HR@10", 0.31, "sampled", "controversy doc"),
     ("M4 cross-check: RecBole vs this repo, HR@10", 0.61, "sampled", "M4 criterion"),
     ("M4 cross-check: RecBole vs this repo, NDCG@10", 7.41, "sampled", "M4 criterion"),
-    ("Loss effect?: RecBole vs this repo, full HR@10", 40.1, "full", "controversy doc"),
+    ("Loss effect?: RecBole vs this repo, full HR@10", 40.07, "full", "controversy doc"),
+    # The loss-only ablation (configs/ablation/sasrec_ml1m_loss_ce.yaml): the same
+    # model, seed, schedule and data as `sasrec_ml1m`, trained with a full-catalog
+    # softmax instead of BCE against one sampled negative. The residual rows are
+    # what RecBole still has left over CE, i.e. the part the objective does NOT
+    # explain -- architecture (d=64 vs 50, 2 heads vs 1, inner 256) and batch size.
+    ("CE vs BCE loss, sampled HR@10", -0.38, "sampled", "loss ablation"),
+    ("CE vs BCE loss, sampled NDCG@10", 3.10, "sampled", "loss ablation"),
+    ("CE vs BCE loss, full HR@10", 22.54, "full", "loss ablation"),
+    ("CE vs BCE loss, full NDCG@10", 32.29, "full", "loss ablation"),
+    ("Residual: RecBole vs CE, full HR@10", 14.30, "full", "loss ablation"),
+    ("Residual: RecBole vs CE, full NDCG@10", 16.06, "full", "loss ablation"),
     # Ablations, all measured against the 100-epoch baseline
     # (`ablation_ml1m_baseline_100ep`) so both sides share a budget. The table
     # originally compared them against the 200-epoch headline run, which inflated

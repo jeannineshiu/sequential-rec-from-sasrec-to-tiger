@@ -68,6 +68,66 @@ def test_score_and_score_full_catalog_agree():
         assert torch.allclose(direct_scores[0, i], full_scores[0, item], atol=1e-5)
 
 
+def test_logits_full_catalog_matches_score_full_catalog_at_last_position():
+    """The CE training head and the eval head must be the same function.
+
+    `score_full_catalog` scores only the final position (what evaluation needs);
+    `logits_full_catalog` scores every position (what CE needs). If they ever
+    disagreed at the last position, the model would be trained against one
+    scoring rule and measured under another.
+    """
+    torch.manual_seed(0)
+    model = SASRec(n_items=15, maxlen=5, hidden_dim=8, num_blocks=1, num_heads=1, dropout=0.0)
+    model.eval()
+    input_seqs = torch.tensor([[0, 1, 2, 3, 4], [1, 2, 3, 4, 5]])
+
+    with torch.no_grad():
+        per_position = model.logits_full_catalog(input_seqs)
+        final_only = model.score_full_catalog(input_seqs)
+
+    assert per_position.shape == (2, 5, 16)
+    assert torch.allclose(per_position[:, -1, 1:], final_only[:, 1:], atol=1e-5)
+
+
+def test_logits_full_catalog_excludes_the_padding_item():
+    """Column 0 is the padding slot, not an item; a softmax must not spend mass on it."""
+    torch.manual_seed(0)
+    model = SASRec(n_items=15, maxlen=5, hidden_dim=8, num_blocks=1, num_heads=1, dropout=0.0)
+    model.eval()
+
+    with torch.no_grad():
+        logits = model.logits_full_catalog(torch.tensor([[0, 1, 2, 3, 4]]))
+
+    assert torch.isneginf(logits[..., 0]).all()
+    assert torch.isfinite(logits[..., 1:]).all()
+    assert torch.allclose(logits.softmax(-1)[..., 0], torch.zeros(1, 5))
+
+
+def test_ce_loss_ignores_padded_positions():
+    """Padded targets are 0, and ignore_index=0 must drop exactly those positions.
+
+    Otherwise the CE arm would average over a different set of positions than the
+    BCE arm's valid_mask, and the ablation would not be loss-only.
+    """
+    torch.manual_seed(0)
+    model = SASRec(n_items=15, maxlen=4, hidden_dim=8, num_blocks=1, num_heads=1, dropout=0.0)
+    model.eval()
+    input_seqs = torch.tensor([[0, 0, 1, 2]])
+    padded_targets = torch.tensor([[0, 0, 2, 3]])
+    real_positions_only = torch.tensor([[2, 3]])
+
+    with torch.no_grad():
+        logits = model.logits_full_catalog(input_seqs)
+        padded_loss = torch.nn.functional.cross_entropy(
+            logits.reshape(-1, logits.shape[-1]), padded_targets.reshape(-1), ignore_index=0
+        )
+        trimmed_loss = torch.nn.functional.cross_entropy(
+            logits[:, 2:, :].reshape(-1, logits.shape[-1]), real_positions_only.reshape(-1)
+        )
+
+    assert torch.allclose(padded_loss, trimmed_loss, atol=1e-6)
+
+
 def test_pos_emb_type_none_ignores_position():
     """With pos_emb_type='none', shuffling non-padding positions in a way that
     keeps the causal structure trivial (single real item) must not change that

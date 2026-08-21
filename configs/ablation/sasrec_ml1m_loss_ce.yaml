@@ -1,0 +1,36 @@
+# Loss-only ablation: full-catalog softmax cross-entropy instead of SASRec's
+# published BCE-against-one-sampled-negative.
+#
+# The control is `sasrec_ml1m` (configs/sasrec_ml1m.yaml), not the 100-epoch
+# ablation baseline: this question is about the +40% HR@10 / +53% NDCG@10
+# full-ranking gap between RecBole's SASRec and this repo's, and every RecBole
+# run is 200 epochs. Every field below is copied verbatim from
+# configs/sasrec_ml1m.yaml -- same seed, same schedule, same maxlen, same
+# optimizer -- so `train.loss_type` is the only thing that differs.
+dataset: ml-1m
+data_dir: data/processed/ml-1m
+
+model:
+  hidden_dim: 50
+  num_blocks: 2
+  num_heads: 1
+  maxlen: 200
+  dropout: 0.2
+
+train:
+  batch_size: 128
+  lr: 0.001
+  adam_beta2: 0.98
+  max_epochs: 200
+  early_stop_patience: 20
+  early_stop_metric: sampled_NDCG@10
+  seed: 42
+  loss_type: ce
+
+eval:
+  k: 10
+  sampled_negatives: 100
+
+mlflow:
+  experiment: sequential-rec
+  run_name: ablation_ml1m_loss_ce
