@@ -4,14 +4,26 @@
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 
 A controlled study of sequential recommendation, from the 2018 self-attentive baseline to a
-TIGER-style generative retriever over RQ-quantized semantic IDs — one codebase, one evaluation
-harness, one set of frozen negatives, so that every number on this page is differenced against
-something measured the same way.
+generative retriever that emits items as sequences of quantized semantic tokens — one codebase, one
+evaluation harness, one set of frozen negatives, so that every number on this page is differenced
+against something measured the same way.
 
 The repo has two deliverables. The first is a **faithful, verified SASRec reproduction** on
 MovieLens-1M and Amazon Beauty. The second is a **generative recommender built on the same
 backbone**, where items are emitted as sequences of semantic tokens rather than looked up in an
 embedding table — and a measurement of exactly what that representation buys and what it costs.
+
+**What the second deliverable is, precisely.** It tests *semantic IDs as an item representation*,
+under a single-variable ablation. It is not a TIGER reproduction. TIGER pairs semantic IDs with a T5
+encoder–decoder, an RQ-VAE quantizer, and a user token; none of those are here. The generative model
+runs on SASRec's own transformer stack, and that is the point: swapping the backbone *and* the item
+representation at once would produce exactly the kind of comparison this repo exists to document —
+one where the measured effect belongs to something nobody chose to test. Holding the backbone fixed
+is what makes "atomic vs. semantic ID" a clean single variable. RQ-VAE was skipped on measured
+evidence rather than on budget: residual K-Means produces **zero dead codes on both datasets**
+([below](#semantic-id-quality)), so the codebook-collapse failure mode RQ-VAE exists to fix does not
+arise here. That is a finding, not a shortcut. The title names the direction of travel; the
+experiments are on the item representation.
 
 Both are evaluated under two protocols side by side (sampled and full-catalog ranking), against a
 measured seed-noise floor, with negative and mixed results reported as they came out.
@@ -24,7 +36,9 @@ measured seed-noise floor, with negative and mixed results reported as they came
 demonstrate.** RecBole's SASRec and BERT4Rec configs are identical on every architectural default
 except dropout (0.5 vs 0.2). Aligning that single line moves the SASRec–BERT4Rec comparison by
 +3.71% HR@10 / +6.33% NDCG@10 — larger than the entire margin the comparison was meant to explain,
-and enough to flip the winner. Same BERT4Rec run, three conclusions.
+and enough to flip the winner. Same BERT4Rec run, three conclusions. This puts the *premise* of the
+BERT4Rec controversy in question rather than settling it: the budget claim at its centre is
+[untested here](#the-dropout-default).
 
 **2. Agreement under the sampled protocol is not agreement.** Two SASRec implementations that match
 to +0.61% on sampled HR@10 diverge by **+40% HR@10 / +53% NDCG@10** under full-catalog ranking. Any
@@ -131,6 +145,17 @@ care and never checking that the *model* hyperparameters were comparable — whi
 the BERT4Rec reproducibility literature describes. Claim-by-claim analysis:
 [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md).
 
+**What this does and does not settle.** The BERT4Rec reproducibility literature's central claim is
+about *training budget* — that BERT4Rec's reported wins need far more training than the original
+comparisons gave it. **This repo does not test that claim.** Only the 1× (200-epoch) point ran; 4×
+and 10× were cut on cost (~58 GPU-hours per model for the full trajectory), so there is no budget
+curve here and nothing on this page adjudicates the controversy on its own terms. What the table
+above establishes is something upstream of it: at a *fixed* budget, the SASRec–BERT4Rec comparison
+is decided by a hyperparameter default neither paper is about, and the winner flips three ways
+depending on which SASRec you pick. That makes the controversy's premise — that these two models
+were ever compared like for like — the thing in question, which is a different and, taken on its
+own, arguably more useful finding. Read it that way, not as a verdict.
+
 ### Sampled vs full-catalog ranking — ML-1M, test, k=10
 
 | Model | HR@10 | NDCG@10 |
@@ -147,8 +172,17 @@ repo, per the paper). The next section tests that directly.
 
 ### The training objective, isolated
 
-The two frameworks' SASRecs differ in the loss *and* in width (64 vs 50), heads (2 vs 1), inner
-size and batch size (2048 vs 128), so the cross-framework gap cannot attribute anything on its own.
+The two frameworks' SASRecs differ in the loss *and* in width (64 vs 50), heads (2 vs 1), inner size
+and update granularity, so the cross-framework gap cannot attribute anything on its own.
+
+A note on that last one, because the nominal numbers invert it. RecBole's batch size is 2048 against
+this repo's 128, which reads as RecBole taking the larger steps. It does not: RecBole augments one
+row per sequence position and takes the loss only at each row's last position, so 2048 rows is 2048
+target positions per update, 480 updates per epoch. This repo emits one sample per user and takes
+the loss at every valid position, so 128 sequences is **13,488** target positions per update and 48
+updates per epoch. RecBole's step is 6.6× *smaller* and it takes 10× more of them. Any ablation on
+"batch size" that copies the number 2048 across would move this repo further from RecBole, not
+closer.
 This ablation changes the objective and nothing else: same model, same seed, same 200-epoch
 schedule, same data, same frozen evaluation negatives, with `train.loss_type: ce` swapping BCE for
 a softmax over the full catalog.
@@ -471,7 +505,9 @@ implied.
 - **40% of the full-ranking divergence between the two SASRecs is still unattributed.** The
   loss-only ablation accounts for 56% of the HR@10 gap and 60% of the NDCG@10 gap; the residual
   (+14.30% / +16.06%) is four to five times the noise floor and therefore real. Width, head count,
-  inner size and batch size all remain uncontrolled, and no ablation separates them.
+  inner size and update granularity all remain uncontrolled, and no ablation separates them. Configs
+  for the first three arms are written (`configs/ablation/sasrec_ml1m_ce_{batch19,width64,heads2}`
+  .yaml), each changing one field against the CE run; none has been trained.
 - **The loss ablation is matched-budget, not converged.** Both arms are still improving at epoch
   200. CE's advantage is measured where BCE has not finished training, which understates BCE — the
   conservative direction for the claim being made, but not a converged comparison.

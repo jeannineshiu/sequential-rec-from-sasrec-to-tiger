@@ -1,0 +1,43 @@
+# P1b arm 2 of 3: hidden width, on top of the CE objective.
+#
+# Control is `ablation_ml1m_loss_ce`; `model.hidden_dim` (50 -> 64, RecBole's
+# default) is the only field that differs from
+# configs/ablation/sasrec_ml1m_loss_ce.yaml.
+#
+# Note what this arm moves besides the transformer width: the prediction head
+# shares the item embedding (src/models/sasrec.py:178), so 50 -> 64 also widens
+# the item table from 3,417 x 50 to 3,417 x 64. That is the same coupling RecBole
+# has at d=64, so it is faithful to the thing being attributed -- but it means a
+# gain here is "width", not "attention capacity" specifically.
+#
+# The FFN inner size stays equal to hidden_dim, as in Kang & McAuley. RecBole
+# defaults inner_size to 256, so that difference is still uncontrolled after this
+# arm; it is not parameterised in src/models/sasrec.py and adding it would change
+# the model rather than its config.
+dataset: ml-1m
+data_dir: data/processed/ml-1m
+
+model:
+  hidden_dim: 64
+  num_blocks: 2
+  num_heads: 1
+  maxlen: 200
+  dropout: 0.2
+
+train:
+  batch_size: 128
+  lr: 0.001
+  adam_beta2: 0.98
+  max_epochs: 200
+  early_stop_patience: 20
+  early_stop_metric: sampled_NDCG@10
+  seed: 42
+  loss_type: ce
+
+eval:
+  k: 10
+  sampled_negatives: 100
+
+mlflow:
+  experiment: sequential-rec
+  run_name: ablation_ml1m_ce_width64

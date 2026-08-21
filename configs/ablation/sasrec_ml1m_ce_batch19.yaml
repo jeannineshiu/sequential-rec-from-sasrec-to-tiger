@@ -1,0 +1,65 @@
+# P1b arm 1 of 3: update granularity, on top of the CE objective.
+#
+# The control is `ablation_ml1m_loss_ce`, not `sasrec_ml1m`. P1 established that
+# the objective explains 56%/60% of the full-ranking gap to RecBole; this arm
+# attacks the +14.30%/+16.06% residual, so CE is held fixed and `train.batch_size`
+# is the only field that differs from configs/ablation/sasrec_ml1m_loss_ce.yaml.
+#
+# WHY 19 AND NOT 2048
+#
+# The README (and the gap list that queued this run) name the difference as
+# "batch size 2048 vs 128". Read literally that is backwards, because the two
+# frameworks count different things:
+#
+#   - RecBole's SequentialDataset augments per position (recbole/data/dataset/
+#     sequential_dataset.py:77), so one ML-1M user of length 166 becomes ~165
+#     rows, and SASRec.calculate_loss gathers only the LAST position of each row
+#     (sasrec.py:113) before the softmax. One row contributes one target. Batch
+#     2048 = 2048 target positions per optimizer step, 480 steps/epoch over
+#     981,491 augmented rows.
+#   - This repo's SASRecTrainDataset emits one sample per user and takes the loss
+#     at every valid position (mean 107.2 of them). Batch 128 = 13,488 target
+#     positions per optimizer step, 48 steps/epoch.
+#
+# So RecBole's step is 6.6x SMALLER than ours in loss terms and it takes 10x more
+# of them per epoch. Setting batch_size: 2048 here would move to ~32k targets per
+# step and 3 steps per epoch -- further from RecBole, not closer -- and it OOMs
+# on a 17GB MPS box regardless (the CE logit tensor is [B, 200, 3417]).
+#
+# 2048 / 107.2 = 19.1, so batch_size 19 puts this repo's optimizer step at
+# RecBole's granularity: ~2048 target positions, 318 steps/epoch. Steps/epoch
+# still trails RecBole's 480 because RecBole's augmentation yields 981,491
+# targets per epoch against our 647,430 (it keeps prefixes shorter than the
+# window; we truncate each user to their last 200 items). Targets-per-step is the
+# knob being matched; that residual difference in epoch size is not controlled
+# and is stated rather than hidden.
+#
+# lr stays at 0.001, which is what RecBole uses at its own granularity, so this
+# is not silently also an lr ablation.
+dataset: ml-1m
+data_dir: data/processed/ml-1m
+
+model:
+  hidden_dim: 50
+  num_blocks: 2
+  num_heads: 1
+  maxlen: 200
+  dropout: 0.2
+
+train:
+  batch_size: 19
+  lr: 0.001
+  adam_beta2: 0.98
+  max_epochs: 200
+  early_stop_patience: 20
+  early_stop_metric: sampled_NDCG@10
+  seed: 42
+  loss_type: ce
+
+eval:
+  k: 10
+  sampled_negatives: 100
+
+mlflow:
+  experiment: sequential-rec
+  run_name: ablation_ml1m_ce_batch19
