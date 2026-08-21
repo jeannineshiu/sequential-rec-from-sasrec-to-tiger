@@ -2,7 +2,7 @@
 
 Why this exists
 ---------------
-The Week 4 RecBole runs (SASRec and BERT4Rec) were evaluated by RecBole's own
+The RecBole runs (SASRec and BERT4Rec) were evaluated by RecBole's own
 evaluator in `uni100` mode. That leaves two holes in the master table, both
 flagged in README.md's methodology notes:
 
@@ -183,10 +183,14 @@ if __name__ == "__main__":
 
     out = rescore(args.npz, args.raw_dir, args.processed_dir)
     print(f"\n{args.npz.stem}  (n_users={out['n_users']})")
-    print(f"  sampled (fixed negatives): HR@10 {out['sampled']['HR@10']:.4f}  "
-          f"NDCG@10 {out['sampled']['NDCG@10']:.4f}")
-    print(f"  full ranking:              HR@10 {out['full']['HR@10']:.4f}  "
-          f"NDCG@10 {out['full']['NDCG@10']:.4f}")
+    print(
+        f"  sampled (fixed negatives): HR@10 {out['sampled']['HR@10']:.4f}  "
+        f"NDCG@10 {out['sampled']['NDCG@10']:.4f}"
+    )
+    print(
+        f"  full ranking:              HR@10 {out['full']['HR@10']:.4f}  "
+        f"NDCG@10 {out['full']['NDCG@10']:.4f}"
+    )
 
     if args.log_mlflow:
         from src.utils import log_run

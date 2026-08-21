@@ -3,8 +3,8 @@
     uv run uvicorn serving.app:app --reload
     open http://127.0.0.1:8000/
 
-The point of showing both models is not a leaderboard -- Week 6 already
-established that the generative one loses on Beauty. It is that the *shape* of
+The point of showing both models is not a leaderboard -- the offline tables
+already established that the generative one loses on Beauty. It is that the *shape* of
 the disagreement is visible per request: the generative model's top-10 tends to
 be more popular and less varied, which is the diversity collapse the tables
 report, made concrete on a single sequence.

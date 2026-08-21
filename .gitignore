@@ -13,10 +13,14 @@ data/processed/
 *.zip
 *.gz
 
-# MLflow
+# MLflow. The canonical tracking DB IS committed: results/tables/master.md is
+# generated from it by src/export_results.py, so without it a clone can read that
+# table but cannot regenerate or verify it. Per-sandbox DBs from remote runs are
+# not -- their runs are merged into mlflow.db by scripts/merge_daytona_results.py.
 mlruns/
 mlartifacts/
 mlflow*.db
+!mlflow.db
 
 # Results: master.md and figures ARE committed deliverables (script-generated,
 # referenced from README.md) -- only the large binary checkpoints are excluded.
@@ -25,7 +29,7 @@ results/checkpoints/
 # Notebooks checkpoints
 .ipynb_checkpoints/
 
-# RecBole (Week 4): regenerable atomic files, cached dataset objects, tensorboard logs
+# RecBole: regenerable atomic files, cached dataset objects, tensorboard logs
 dataset/
 saved/
 log_tensorboard/
@@ -44,8 +48,9 @@ notes/
 .idea/
 .obsidian/
 
-# Week 4 Daytona launch/run logs (throwaway)
+# Daytona launch/run logs (throwaway)
 week4*.log
+*_daytona_*.db
 
 # RecBole logger output (regenerable)
 log/

@@ -1,4 +1,4 @@
-"""Semantic-ID quality spot check (Week 5 Day 3-4).
+"""Semantic-ID quality spot check.
 
 The RQ-KMeans stats say the codebooks are healthy (no dead codes, low
 collisions), but that is a statement about the quantizer, not about whether the

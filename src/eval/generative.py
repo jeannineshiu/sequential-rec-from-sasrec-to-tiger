@@ -222,9 +222,13 @@ def exhaustive_ranks(
 
     for start in range(0, len(users), user_batch):
         chunk_users = users[start : start + user_batch]
-        history = torch.from_numpy(
-            build_eval_batch(chunk_users, train, vocab, maxlen_items, extra_history)
-        ).long().to(device)
+        history = (
+            torch.from_numpy(
+                build_eval_batch(chunk_users, train, vocab, maxlen_items, extra_history)
+            )
+            .long()
+            .to(device)
+        )
         cache = model.build_cache(history)
 
         scores = torch.empty(len(chunk_users), n_items + 1, device=device)

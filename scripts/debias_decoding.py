@@ -1,7 +1,10 @@
 """Separate the representation change from the scorer change.
 
-Week 6 found that GenRec's recommendations cover 7% of the catalogue against
-SASRec's 76%, and proposed a mechanism: GenRec ranks by P(item | history), which
+GenRec's recommendations cover 14% of the catalogue against SASRec's 76%
+(1,749 vs 9,221 distinct items across all top-10s, under exhaustive scoring --
+an earlier beam-ranked pass put GenRec at 7%, which was measuring the beam's
+width as much as the model). The proposed mechanism: GenRec ranks by
+P(item | history), which
 contains the popularity prior, while SASRec's dot product is unnormalized and
 carries none. If that is right, dividing out the prior should recover tail
 accuracy — and if it is wrong, it should not.
@@ -69,7 +72,8 @@ def main(genrec_config: str, alphas: list[float], k: int, limit: int | None) -> 
         "approximation here at all. `alpha` divides out the add-one-smoothed training-frequency",
         "prior: 0 is the model as trained, 1 is pointwise mutual information.",
         "",
-        f"| alpha | HR@{k} | NDCG@{k} | " + " | ".join(f"{b} HR@{k}" for b, _, _ in DEFAULT_BUCKETS)
+        f"| alpha | HR@{k} | NDCG@{k} | "
+        + " | ".join(f"{b} HR@{k}" for b, _, _ in DEFAULT_BUCKETS)
         + " | distinct items in top-10 |",
         "|" + "---|" * (4 + len(DEFAULT_BUCKETS)),
     ]

@@ -1,4 +1,4 @@
-"""Content embeddings for semantic IDs (Week 5 Day 1-2).
+"""Content embeddings for semantic IDs.
 
 Item text -> all-MiniLM-L6-v2 -> 384-dim vector, one row per internal item id.
 The output feeds RQ-KMeans quantization (`src.semantic_ids.rq_kmeans`).
@@ -56,7 +56,9 @@ def build(
     print(f"{dataset}: {len(item_ids)} items, {n_empty} with no metadata text")
     lengths = [len(t) for t in texts if t]
     if lengths:
-        print(f"  text length chars: min={min(lengths)} mean={np.mean(lengths):.0f} max={max(lengths)}")
+        print(
+            f"  text length chars: min={min(lengths)} mean={np.mean(lengths):.0f} max={max(lengths)}"
+        )
     for i in item_ids[:3]:
         print(f"  item {int(i)}: {texts_by_id[int(i)][:110]!r}")
 

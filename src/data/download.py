@@ -100,8 +100,8 @@ def download_beauty_meta(dest_dir: Path) -> Path:
     """Download the Amazon 'Beauty' item metadata (~99MB gzip) into
     dest_dir/beauty/ and return that directory.
 
-    Only needed from Week 5 on, for semantic IDs -- the SASRec/BERT4Rec work
-    uses interactions alone. Taken from the same categoryFiles/ directory as
+    Only needed for semantic IDs -- the SASRec/BERT4Rec work uses interactions
+    alone. Taken from the same categoryFiles/ directory as
     ratings_Beauty.csv, so the ASINs line up with the ratings file (verified:
     all 12,101 5-core items are present in the metadata).
     """
@@ -128,7 +128,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--with-meta",
         action="store_true",
-        help="also fetch Amazon Beauty item metadata (~99MB), needed for Week 5 semantic IDs",
+        help="also fetch Amazon Beauty item metadata (~99MB), needed for semantic IDs",
     )
     args = parser.parse_args()
     if args.dataset in ("ml-1m", "all"):

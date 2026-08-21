@@ -9,9 +9,9 @@ generative model a lower-budget run.
 
 No negative sampling here. The generative objective is a softmax over the level's
 codebook (256 entries), so it is closer to a full-catalog cross-entropy than to
-SASRec's BCE-against-one-negative -- which is exactly the difference Week 4
-flagged as the largest unexplained effect in the project, and now shows up as a
-deliberate part of the design rather than an accident.
+SASRec's BCE-against-one-negative -- which is exactly the difference flagged as
+the largest unexplained effect in this repo's cross-framework SASRec comparison,
+and here shows up as a deliberate part of the design rather than an accident.
 """
 
 import numpy as np
@@ -54,9 +54,7 @@ class GenRecTrainDataset(Dataset):
         input_tokens = self.vocab.item_tokens[np.asarray(input_items)].reshape(-1)
         # Shift by one token; the position past the window predicts the first
         # code of the next item, which is the only supervision that item gives.
-        target_tokens = np.concatenate(
-            [input_tokens[1:], self.vocab.item_tokens[next_item][:1]]
-        )
+        target_tokens = np.concatenate([input_tokens[1:], self.vocab.item_tokens[next_item][:1]])
 
         return (
             torch.from_numpy(input_tokens.astype(np.int64)),

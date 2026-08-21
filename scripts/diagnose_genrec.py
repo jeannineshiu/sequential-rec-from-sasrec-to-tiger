@@ -41,7 +41,10 @@ def sasrec_topk(model, train, test, extra, n_items, maxlen, k, device, batch_siz
     for start in range(0, len(users), batch_size):
         chunk = users[start : start + batch_size]
         inputs = np.stack(
-            [ds_mod.build_eval_input(train.get(u, []), maxlen, extra=extra.get(u, [])) for u in chunk]
+            [
+                ds_mod.build_eval_input(train.get(u, []), maxlen, extra=extra.get(u, []))
+                for u in chunk
+            ]
         )
         scores = score_fn(inputs).copy()
         scores[:, 0] = -np.inf
@@ -80,9 +83,11 @@ def per_level_accuracy(model, vocab, train, test, extra, maxlen_items, device, b
 
     for start in range(0, len(users), batch_size):
         chunk = users[start : start + batch_size]
-        history = torch.from_numpy(
-            build_eval_batch(chunk, train, vocab, maxlen_items, extra)
-        ).long().to(device)
+        history = (
+            torch.from_numpy(build_eval_batch(chunk, train, vocab, maxlen_items, extra))
+            .long()
+            .to(device)
+        )
         truth = torch.from_numpy(vocab.item_tokens[[test[u] for u in chunk]]).long().to(device)
 
         cache = model.build_cache(history)
@@ -120,10 +125,16 @@ def main(sasrec_config: str, genrec_config: str, k: int, alphas: list[float]) ->
     frequency = item_train_frequency(train, n_items)
 
     sasrec = load_sasrec(
-        sasrec_cfg, n_items, device, Path("results/checkpoints") / f"{sasrec_cfg['mlflow']['run_name']}.pt"
+        sasrec_cfg,
+        n_items,
+        device,
+        Path("results/checkpoints") / f"{sasrec_cfg['mlflow']['run_name']}.pt",
     )
     genrec = load_genrec(
-        genrec_cfg, vocab, device, Path("results/checkpoints") / f"{genrec_cfg['mlflow']['run_name']}.pt"
+        genrec_cfg,
+        vocab,
+        device,
+        Path("results/checkpoints") / f"{genrec_cfg['mlflow']['run_name']}.pt",
     )
 
     print("SASRec top-10 ...")
@@ -136,9 +147,16 @@ def main(sasrec_config: str, genrec_config: str, k: int, alphas: list[float]) ->
     # an earlier version of this table reported 839 distinct items.
     print("GenRec top-10 (exhaustive) ...")
     users_b, _, topk = exhaustive_ranks(
-        genrec, vocab, train, test,
-        maxlen_items=genrec_cfg["model"]["maxlen"], device=device,
-        alphas=alphas, prior=log_prior(frequency), extra_history=extra, topk=k,
+        genrec,
+        vocab,
+        train,
+        test,
+        maxlen_items=genrec_cfg["model"]["maxlen"],
+        device=device,
+        alphas=alphas,
+        prior=log_prior(frequency),
+        extra_history=extra,
+        topk=k,
     )
     assert users == users_b, "the two models were scored on different user orderings"
 

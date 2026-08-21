@@ -1,7 +1,7 @@
-"""Constrained beam search over semantic ID tokens (Week 5 Day 5-7, step 2).
+"""Constrained beam search over semantic ID tokens.
 
 A generative recommender can emit any token sequence, and most sequences are not
-items. Two ways to deal with that, and the plan runs both so the difference is
+items. Two ways to deal with that, and both are run so the difference is
 measurable rather than assumed:
 
   greedy_decode  -- generate freely, filter illegal results afterwards. Simple,
@@ -127,8 +127,10 @@ def beam_search(
         parent, token = flat // V, flat % V
 
         prefixes = torch.cat(
-            [torch.gather(prefixes, 1, parent.unsqueeze(-1).expand(-1, -1, level)),
-             token.unsqueeze(-1)],
+            [
+                torch.gather(prefixes, 1, parent.unsqueeze(-1).expand(-1, -1, level)),
+                token.unsqueeze(-1),
+            ],
             dim=2,
         )
 

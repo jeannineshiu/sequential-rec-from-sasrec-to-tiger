@@ -1,12 +1,16 @@
 """How much of GenRec's full-ranking score is lost to the beam?
 
-The generative model ranks by constrained beam search, so an item the beam never
-reaches is a miss even if exhaustive scoring would have placed it top-10. That is
-an approximation the dot-product baselines do not carry, and differencing the two
-without bounding it would repeat Week 4's mistake in a new costume.
+SUPERSEDED -- kept because REPRODUCTION_LOG.md documents its output, but do not
+draw conclusions from it. This script widens the beam and reports where the
+metric stops moving, on the reasoning that a flat HR@10 from beam 20 to beam 200
+means the beam is not what separates GenRec from SASRec. That reasoning is wrong:
+widening the beam finds more true targets *and* more competitors at once, the two
+cancel, and the flat curve reads as convergence when nothing has converged. The
+sweep tests whether the beam finds the target, never whether its ranking is
+faithful -- and it is not (mean true rank of a beam-reported top-10 hit is 167).
 
-This widens the beam and reports where the metric stops moving. If HR@10 is flat
-from beam 20 to beam 200, the beam is not what separates GenRec from SASRec.
+Use exhaustive scoring instead: src/eval/generative.py, driven by
+scripts/compare_atomic_vs_semantic.py. See the beam-search section of README.md.
 
     uv run python -m scripts.beam_sensitivity --config configs/genrec_beauty.yaml
 """
@@ -67,8 +71,10 @@ def main(config_path: str, beams: list[int], checkpoint: str | None) -> None:
         extra_history=extra,
         k=k,
     )
-    print(f"\nsampled (beam-independent): HR@{k} {sampled[f'HR@{k}']:.4f} "
-          f"NDCG@{k} {sampled[f'NDCG@{k}']:.4f}")
+    print(
+        f"\nsampled (beam-independent): HR@{k} {sampled[f'HR@{k}']:.4f} "
+        f"NDCG@{k} {sampled[f'NDCG@{k}']:.4f}"
+    )
 
     print(f"\n| beam | full HR@{k} | full NDCG@{k} | sec |")
     print("|---|---|---|---|")

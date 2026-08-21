@@ -53,8 +53,11 @@ class SemanticIdVocab:
         for row, item in enumerate(self.item_ids):
             self.item_tokens[item] = self.codes[row] + np.array(offsets, dtype=np.int64)
 
-        self.token_to_item = {tuple(int(t) for t in tok): int(item)
-                              for item, tok in enumerate(self.item_tokens) if item > 0}
+        self.token_to_item = {
+            tuple(int(t) for t in tok): int(item)
+            for item, tok in enumerate(self.item_tokens)
+            if item > 0
+        }
         if len(self.token_to_item) != len(self.item_ids):
             raise ValueError("semantic IDs are not unique -- disambiguation token missing?")
 
@@ -90,7 +93,9 @@ class SemanticIdVocab:
             for level in range(self.n_levels):
                 prefix = tuple(int(t) for t in tokens[:level])
                 children.setdefault(prefix, set()).add(int(tokens[level]))
-        return {prefix: np.array(sorted(tokens), dtype=np.int64) for prefix, tokens in children.items()}
+        return {
+            prefix: np.array(sorted(tokens), dtype=np.int64) for prefix, tokens in children.items()
+        }
 
     def allowed_next(self, prefix) -> np.ndarray:
         """Tokens that extend `prefix` toward at least one real item (may be empty)."""

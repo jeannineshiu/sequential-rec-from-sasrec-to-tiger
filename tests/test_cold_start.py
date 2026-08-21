@@ -75,7 +75,10 @@ def test_empty_bucket_reports_nan_rather_than_crashing():
     users = [10]
     targets = {10: 1}
     frequency = np.array([0, 100])
-    rows = {row["bucket"]: row for row in bucketed_metrics(users, {"m": np.array([0])}, targets, frequency)}
+    rows = {
+        row["bucket"]: row
+        for row in bucketed_metrics(users, {"m": np.array([0])}, targets, frequency)
+    }
 
     assert rows["head"]["m"]["HR@10"] == 1.0
     assert np.isnan(rows["unseen"]["m"]["HR@10"])

@@ -1,5 +1,5 @@
 """Train SASRec on a config, with early stopping on sampled valid NDCG@10 and
-MLflow logging of every epoch + final test metrics. See EXECUTION_PLAN.md Week 2.
+MLflow logging of every epoch + final test metrics.
 """
 
 import argparse

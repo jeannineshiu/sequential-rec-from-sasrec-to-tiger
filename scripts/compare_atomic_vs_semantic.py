@@ -1,4 +1,4 @@
-"""Week 6 main experiment: SASRec (atomic IDs) vs GenRec (semantic IDs).
+"""Main comparison: SASRec (atomic IDs) vs GenRec (semantic IDs).
 
 Loads both trained checkpoints, scores the same test users under the same
 protocol, and reports overall plus cold-start-bucketed metrics from *one* pass
@@ -54,7 +54,9 @@ def load_sasrec(cfg: dict, n_items: int, device: torch.device, checkpoint: Path)
     return model.eval()
 
 
-def load_genrec(cfg: dict, vocab: SemanticIdVocab, device: torch.device, checkpoint: Path) -> GenRec:
+def load_genrec(
+    cfg: dict, vocab: SemanticIdVocab, device: torch.device, checkpoint: Path
+) -> GenRec:
     model = GenRec(
         vocab_size=vocab.vocab_size,
         n_levels=vocab.n_levels,
@@ -87,10 +89,16 @@ def main(
     extra = {u: [valid[u]] for u in test}
 
     sasrec = load_sasrec(
-        sasrec_cfg, n_items, device, Path("results/checkpoints") / f"{sasrec_cfg['mlflow']['run_name']}.pt"
+        sasrec_cfg,
+        n_items,
+        device,
+        Path("results/checkpoints") / f"{sasrec_cfg['mlflow']['run_name']}.pt",
     )
     genrec = load_genrec(
-        genrec_cfg, vocab, device, Path("results/checkpoints") / f"{genrec_cfg['mlflow']['run_name']}.pt"
+        genrec_cfg,
+        vocab,
+        device,
+        Path("results/checkpoints") / f"{genrec_cfg['mlflow']['run_name']}.pt",
     )
 
     print("scoring SASRec (exhaustive full ranking) ...")
@@ -112,17 +120,30 @@ def main(
         # ranking flatters the generative model rather than only costing it.
         print(f"scoring GenRec (constrained beam search, beam={beam_size}) ...")
         users_b, ranks_b = generative_full_ranking_ranks(
-            genrec, vocab, train, test,
-            maxlen_items=genrec_cfg["model"]["maxlen"], device=device,
-            extra_history=extra, exclude_extra=extra, k=k, beam_size=beam_size,
+            genrec,
+            vocab,
+            train,
+            test,
+            maxlen_items=genrec_cfg["model"]["maxlen"],
+            device=device,
+            extra_history=extra,
+            exclude_extra=extra,
+            k=k,
+            beam_size=beam_size,
         )
         ranks_by_model[f"{SEMANTIC}, beam {beam_size}"] = ranks_b
     else:
         print(f"scoring GenRec (exhaustive, alphas={alphas}) ...")
         users_b, ranks, _ = exhaustive_ranks(
-            genrec, vocab, train, test,
-            maxlen_items=genrec_cfg["model"]["maxlen"], device=device,
-            alphas=alphas, prior=log_prior(frequency), extra_history=extra,
+            genrec,
+            vocab,
+            train,
+            test,
+            maxlen_items=genrec_cfg["model"]["maxlen"],
+            device=device,
+            alphas=alphas,
+            prior=log_prior(frequency),
+            extra_history=extra,
         )
         for alpha in alphas:
             ranks_by_model[semantic_label(alpha)] = ranks[alpha]
@@ -137,7 +158,8 @@ def main(
     figure = plot_buckets(rows, models, Path("results/figures/cold_start_buckets.png"), k=k)
 
     bucket_desc = ", ".join(
-        f"{label}: {low}" + (f"–{high}" if high is not None else "+") for label, low, high in DEFAULT_BUCKETS
+        f"{label}: {low}" + (f"–{high}" if high is not None else "+")
+        for label, low, high in DEFAULT_BUCKETS
     )
     out = Path("results/tables/atomic_vs_semantic.md")
     out.parent.mkdir(parents=True, exist_ok=True)

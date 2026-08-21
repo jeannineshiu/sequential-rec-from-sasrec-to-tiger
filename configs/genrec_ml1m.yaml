@@ -1,7 +1,7 @@
 # TIGER-style generative recommender on Amazon Beauty.
 #
 # Model hyperparameters deliberately mirror configs/sasrec_ml1m.yaml so the
-# Week 6 comparison isolates the item representation (atomic vs semantic ID).
+# comparison isolates the item representation (atomic vs semantic ID).
 # maxlen is in *items*, as it is for SASRec; the token sequence the model sees
 # is maxlen x n_levels = 200 tokens.
 dataset: ml-1m

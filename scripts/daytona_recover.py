@@ -54,9 +54,7 @@ def recover(daytona: Daytona, sandbox_id: str, keep: bool) -> None:
     # Take the runner's per-model results db if present, else the raw tracking db
     # the training process wrote (identical content; the copy step may not have run).
     found = [
-        line.split()[-1]
-        for line in listing.result.splitlines()
-        if line.strip().endswith(".db")
+        line.split()[-1] for line in listing.result.splitlines() if line.strip().endswith(".db")
     ]
     if not found:
         print(
@@ -76,7 +74,9 @@ def recover(daytona: Daytona, sandbox_id: str, keep: bool) -> None:
         size = local.stat().st_size
         print(f"  wrote {local} ({size} bytes)")
         if size == 0:
-            print("  WARNING: downloaded file is empty -- NOT deleting the sandbox", file=sys.stderr)
+            print(
+                "  WARNING: downloaded file is empty -- NOT deleting the sandbox", file=sys.stderr
+            )
             keep = True
 
     if keep:
@@ -89,10 +89,14 @@ def recover(daytona: Daytona, sandbox_id: str, keep: bool) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("sandbox_id", nargs="?", help="sandbox to recover results from")
     parser.add_argument("--list", action="store_true", help="list sandboxes and exit")
-    parser.add_argument("--keep", action="store_true", help="download but do not delete the sandbox")
+    parser.add_argument(
+        "--keep", action="store_true", help="download but do not delete the sandbox"
+    )
     args = parser.parse_args()
 
     daytona = connect()

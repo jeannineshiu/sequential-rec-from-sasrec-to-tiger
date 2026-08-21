@@ -136,7 +136,9 @@ def test_score_item_tokens_is_a_proper_log_probability(model, vocab):
     all_scores = model.score_item_tokens(history, every_combination)
     assert torch.exp(all_scores).sum().item() == pytest.approx(1.0, abs=1e-4)
 
-    item_scores = model.score_item_tokens(history, torch.from_numpy(vocab.item_tokens[1:]).unsqueeze(0))
+    item_scores = model.score_item_tokens(
+        history, torch.from_numpy(vocab.item_tokens[1:]).unsqueeze(0)
+    )
     assert item_scores.shape == (1, 6)
     assert torch.exp(item_scores).sum().item() < 1.0
 
@@ -302,5 +304,7 @@ def test_cached_scoring_handles_a_single_level():
     all_items = torch.from_numpy(vocab.item_tokens[1:]).unsqueeze(0)
 
     cached = model.score_item_tokens_cached(history, all_items)
-    torch.testing.assert_close(cached, model.score_item_tokens(history, all_items), atol=1e-5, rtol=1e-4)
+    torch.testing.assert_close(
+        cached, model.score_item_tokens(history, all_items), atol=1e-5, rtol=1e-4
+    )
     assert torch.exp(cached).sum().item() == pytest.approx(1.0, abs=1e-4)

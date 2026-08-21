@@ -1,4 +1,4 @@
-"""Train the semantic-ID generative recommender (Week 5 Day 5-7).
+"""Train the semantic-ID generative recommender.
 
 Mirrors `src/train.py` -- same config shape, same MLflow experiment, same early
 stopping on sampled valid NDCG@10 -- so a GenRec run and a SASRec run differ in

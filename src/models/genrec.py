@@ -1,4 +1,4 @@
-"""TIGER-style generative recommender over semantic ID tokens (Week 5 Day 5-7).
+"""TIGER-style generative recommender over semantic ID tokens.
 
 Deliberately *not* a T5 encoder-decoder. This reuses SASRec's backbone --
 the same causal blocks, the same pre-LN ordering, the same tied output head --
@@ -6,11 +6,12 @@ and changes exactly one thing: an item is no longer one atomic embedding but a
 sequence of L semantic ID tokens, so the model predicts the next item by
 autoregressively emitting its codes.
 
-That is the whole point. Week 4 spent itself discovering that a comparison
-between two architectures had quietly become a comparison between two framework
-defaults; swapping in a different transformer stack alongside the different item
-representation would repeat the mistake in a new place. With a shared backbone,
-"atomic vs semantic ID" is the only variable that moves.
+That is the whole point. The SASRec-vs-BERT4Rec work in this repo spent itself
+discovering that a comparison between two architectures had quietly become a
+comparison between two framework defaults; swapping in a different transformer
+stack alongside the different item representation would repeat the mistake in a
+new place. With a shared backbone, "atomic vs semantic ID" is the only variable
+that moves.
 
 Token layout: sequences live on a grid of L tokens per item, left-padded to a
 whole number of items, so a token at position p always belongs to level p % L.
@@ -166,7 +167,11 @@ class GenRec(nn.Module):
         D = self.hidden_dim
         index = {"q": 0, "k": 1, "v": 2}[part]
         weight = layer.in_proj_weight[index * D : (index + 1) * D]
-        bias = layer.in_proj_bias[index * D : (index + 1) * D] if layer.in_proj_bias is not None else None
+        bias = (
+            layer.in_proj_bias[index * D : (index + 1) * D]
+            if layer.in_proj_bias is not None
+            else None
+        )
         return torch.nn.functional.linear(x, weight, bias)
 
     @torch.no_grad()
@@ -183,7 +188,9 @@ class GenRec(nn.Module):
 
         seqs = self.token_emb(history_tokens) * (self.hidden_dim**0.5)
         if self.pos_emb_type == "learnable":
-            positions = torch.arange(1, T + 1, device=history_tokens.device).unsqueeze(0).expand(B, T)
+            positions = (
+                torch.arange(1, T + 1, device=history_tokens.device).unsqueeze(0).expand(B, T)
+            )
             positions = positions * (~key_padding_mask).long()
             seqs = seqs + self.pos_emb(positions)
         seqs = seqs.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
@@ -200,8 +207,12 @@ class GenRec(nn.Module):
             )
             q = self.attn_layernorms[i](seqs)
             attn_out, _ = self.attn_layers[i](
-                q, seqs, seqs, attn_mask=causal_mask,
-                key_padding_mask=key_padding_mask, need_weights=False,
+                q,
+                seqs,
+                seqs,
+                attn_mask=causal_mask,
+                key_padding_mask=key_padding_mask,
+                need_weights=False,
             )
             seqs = q + attn_out
             seqs = self.ffn_layernorms[i](seqs)
@@ -364,8 +375,12 @@ class GenRec(nn.Module):
             hidden = self._decode_with_cache(cache, item_tokens[:, :, : L - 1])
             logits = hidden @ head  # [B, C, L-1, V]
             levels = torch.arange(1, L, device=logits.device)
-            logits = logits.masked_fill(~self.level_legal[levels].view(1, 1, L - 1, -1), float("-inf"))
+            logits = logits.masked_fill(
+                ~self.level_legal[levels].view(1, 1, L - 1, -1), float("-inf")
+            )
             logprobs = torch.log_softmax(logits, dim=-1)
-            total = total + logprobs.gather(-1, item_tokens[:, :, 1:].unsqueeze(-1)).squeeze(-1).sum(-1)
+            total = total + logprobs.gather(-1, item_tokens[:, :, 1:].unsqueeze(-1)).squeeze(
+                -1
+            ).sum(-1)
 
         return total

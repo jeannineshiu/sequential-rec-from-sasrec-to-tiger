@@ -74,7 +74,9 @@ def bucketed_metrics(
         row = {"bucket": label, "n_users": int(len(idx))}
         for model, ranks in ranks_by_model.items():
             row[model] = (
-                summarize(ranks[idx], k=k) if len(idx) else {f"HR@{k}": float("nan"), f"NDCG@{k}": float("nan")}
+                summarize(ranks[idx], k=k)
+                if len(idx)
+                else {f"HR@{k}": float("nan"), f"NDCG@{k}": float("nan")}
             )
         rows.append(row)
 

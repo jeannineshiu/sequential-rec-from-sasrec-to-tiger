@@ -1,4 +1,4 @@
-"""RQ-KMeans: content embeddings -> semantic IDs (Week 5 Day 3-4).
+"""RQ-KMeans: content embeddings -> semantic IDs.
 
 Residual quantization, the cheap deterministic version of TIGER's RQ-VAE:
 level 1 runs KMeans on the embeddings, level 2 on what level 1 could not
@@ -138,7 +138,9 @@ def build(
         f"largest group {collision_stats['max_group_size']}"
     )
     explained = 1 - residual_norms[-1] / residual_norms[0]
-    print(f"  residual norm {residual_norms[0]:.4f} -> {residual_norms[-1]:.4f} ({explained:.1%} explained)")
+    print(
+        f"  residual norm {residual_norms[0]:.4f} -> {residual_norms[-1]:.4f} ({explained:.1%} explained)"
+    )
 
     out_path = sem_dir / "semantic_ids.npz"
     np.savez_compressed(out_path, item_ids=item_ids, codes=codes, codebooks=codebooks)

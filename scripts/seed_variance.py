@@ -47,28 +47,28 @@ METRICS = [
 # ones here, so a single global floor would be far too strict for sampled margins
 # and far too loose for full-ranking ones.
 CLAIMED_MARGINS = [
-    ("Week 4: dropout 0.5 -> 0.2, HR@10", 3.71, "sampled", "README headline"),
-    ("Week 4: dropout 0.5 -> 0.2, NDCG@10", 6.33, "sampled", "README headline"),
-    ("Week 4: BERT4Rec vs default SASRec, HR@10", 3.39, "sampled", "controversy doc"),
-    ("Week 4: SASRec vs BERT4Rec at matched dropout, HR@10", 0.31, "sampled", "controversy doc"),
+    ("Dropout default 0.5 -> 0.2, HR@10", 3.71, "sampled", "README headline"),
+    ("Dropout default 0.5 -> 0.2, NDCG@10", 6.33, "sampled", "README headline"),
+    ("BERT4Rec vs default SASRec, HR@10", 3.39, "sampled", "controversy doc"),
+    ("SASRec vs BERT4Rec at matched dropout, HR@10", 0.31, "sampled", "controversy doc"),
     ("M4 cross-check: RecBole vs this repo, HR@10", 0.61, "sampled", "M4 criterion"),
     ("M4 cross-check: RecBole vs this repo, NDCG@10", 7.41, "sampled", "M4 criterion"),
     ("Loss effect?: RecBole vs this repo, full HR@10", 40.1, "full", "controversy doc"),
-    # Week 3 ablations, all measured against the 100-epoch baseline
+    # Ablations, all measured against the 100-epoch baseline
     # (`ablation_ml1m_baseline_100ep`) so both sides share a budget. The table
     # originally compared them against the 200-epoch headline run, which inflated
     # every delta -- by +0.47% on sampled HR@10 but +5.36% on full HR@10, enough to
     # flip two conclusions. See REPRODUCTION_LOG.md.
-    ("A1: sinusoidal vs learnable pos emb", -0.06, "sampled", "Week 3 ablation"),
-    ("A1: none vs learnable pos emb", -1.05, "sampled", "Week 3 ablation"),
-    ("A2: maxlen 100 vs 200", -1.15, "sampled", "Week 3 ablation"),
-    ("A2: maxlen 50 vs 200", -3.61, "sampled", "Week 3 ablation"),
-    ("A4: popularity vs uniform negatives", -7.51, "sampled", "Week 3 ablation"),
-    ("A1: sinusoidal vs learnable pos emb, full", -7.11, "full", "Week 3 ablation"),
-    ("A1: none vs learnable pos emb, full", -2.47, "full", "Week 3 ablation"),
-    ("A2: maxlen 100 vs 200, full", -0.13, "full", "Week 3 ablation"),
-    ("A2: maxlen 50 vs 200, full", -13.45, "full", "Week 3 ablation"),
-    ("A4: popularity vs uniform negatives, full", -20.35, "full", "Week 3 ablation"),
+    ("A1: sinusoidal vs learnable pos emb", -0.06, "sampled", "ablation table"),
+    ("A1: none vs learnable pos emb", -1.05, "sampled", "ablation table"),
+    ("A2: maxlen 100 vs 200", -1.15, "sampled", "ablation table"),
+    ("A2: maxlen 50 vs 200", -3.61, "sampled", "ablation table"),
+    ("A4: popularity vs uniform negatives", -7.51, "sampled", "ablation table"),
+    ("A1: sinusoidal vs learnable pos emb, full", -7.11, "full", "ablation table"),
+    ("A1: none vs learnable pos emb, full", -2.47, "full", "ablation table"),
+    ("A2: maxlen 100 vs 200, full", -0.13, "full", "ablation table"),
+    ("A2: maxlen 50 vs 200, full", -13.45, "full", "ablation table"),
+    ("A4: popularity vs uniform negatives, full", -20.35, "full", "ablation table"),
 ]
 
 # A claimed margin is a difference between two runs that were each measured once.
@@ -115,7 +115,9 @@ if __name__ == "__main__":
     print(f"runs included ({len(used)}): {', '.join(used)}\n")
 
     worst: dict[str, float] = {"sampled": 0.0, "full": 0.0}
-    print(f"{'metric':<20} {'mean':>8} {'std':>8} {'rel.std':>8} {'min':>8} {'max':>8} {'rel.range':>10}")
+    print(
+        f"{'metric':<20} {'mean':>8} {'std':>8} {'rel.std':>8} {'min':>8} {'max':>8} {'rel.range':>10}"
+    )
     for label, key in METRICS:
         v = vals[key]
         if len(v) < 2:

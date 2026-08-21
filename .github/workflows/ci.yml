@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: lint + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check src scripts serving tests
+
+      - name: Format check (black)
+        run: uv run black --check src scripts serving tests
+
+      # Datasets and trained checkpoints are not in version control, so the
+      # tests that need them skip themselves (see tests/test_serving.py). What
+      # runs here is the logic that must hold regardless of data: preprocessing
+      # invariants, metric definitions, model shapes and masking, semantic-ID
+      # construction, and cold-start bucketing.
+      - name: Tests
+        run: uv run pytest tests/ -q

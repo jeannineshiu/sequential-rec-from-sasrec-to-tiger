@@ -130,8 +130,16 @@ TRAIN_THREADS = 4
 # loss. Every budget must be divisible by eval_step (10) so a validation lands on
 # each milestone.
 BUDGETS = {
-    "SASRec": [(200, "sasrec_recbole_1x"), (800, "sasrec_recbole_4x"), (2000, "sasrec_recbole_10x")],
-    "BERT4Rec": [(200, "bert4rec_recbole_1x"), (800, "bert4rec_recbole_4x"), (2000, "bert4rec_recbole_10x")],
+    "SASRec": [
+        (200, "sasrec_recbole_1x"),
+        (800, "sasrec_recbole_4x"),
+        (2000, "sasrec_recbole_10x"),
+    ],
+    "BERT4Rec": [
+        (200, "bert4rec_recbole_1x"),
+        (800, "bert4rec_recbole_4x"),
+        (2000, "bert4rec_recbole_10x"),
+    ],
 }
 
 # Tiny budgets for a cheap end-to-end pipeline check (--smoke): validates the
@@ -255,7 +263,9 @@ def _require_working_github_token(token: str) -> None:
         with urllib.request.urlopen(req, timeout=30) as resp:
             repo = json.load(resp)
     except urllib.error.HTTPError as exc:
-        detail = "token is expired, revoked, or malformed" if exc.code == 401 else f"HTTP {exc.code}"
+        detail = (
+            "token is expired, revoked, or malformed" if exc.code == 401 else f"HTTP {exc.code}"
+        )
         print(
             f"GITHUB_TOKEN cannot read {owner_repo} ({detail}).\n"
             "The sandbox pushes results back over this token -- without it a multi-hour "
@@ -265,7 +275,10 @@ def _require_working_github_token(token: str) -> None:
         )
         sys.exit(1)
     except urllib.error.URLError as exc:
-        print(f"Could not reach the GitHub API to validate GITHUB_TOKEN: {exc.reason}", file=sys.stderr)
+        print(
+            f"Could not reach the GitHub API to validate GITHUB_TOKEN: {exc.reason}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Read access alone isn't enough: the sandbox has to push.
@@ -329,7 +342,9 @@ def budgets_arg_for(budget_map: dict, model: str) -> str:
     return ",".join(f"{epochs}:{name}" for epochs, name in budget_map[model])
 
 
-def main(models: list[str], budget_map: dict, local_db_path: str, configs: str | None = None) -> None:
+def main(
+    models: list[str], budget_map: dict, local_db_path: str, configs: str | None = None
+) -> None:
     """Local-driven path: this process stays connected, streams progress, and
     downloads mlflow.db. Needs the laptop awake for the whole run. See
     main_detached for the Mac-independent path."""
@@ -451,7 +466,9 @@ def main_detached(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the Week 4 RecBole training-budget sweep on a Daytona GPU sandbox.")
+    parser = argparse.ArgumentParser(
+        description="Run the Week 4 RecBole training-budget sweep on a Daytona GPU sandbox."
+    )
     parser.add_argument(
         "--model",
         choices=list(BUDGETS.keys()),
@@ -477,7 +494,7 @@ if __name__ == "__main__":
         "--budgets",
         type=str,
         default=None,
-        help='Override the built-in budget list for the selected model(s), as '
+        help="Override the built-in budget list for the selected model(s), as "
         '"epochs:run_name" pairs, e.g. "200:sasrec_recbole_1x". GPU time scales directly '
         "with the largest budget, so this is the knob for running a single cheap point "
         "instead of the full 1x/4x/10x trajectory. Every budget must be divisible by "

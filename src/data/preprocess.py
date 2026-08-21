@@ -1,8 +1,8 @@
 """Generic sequential-rec preprocessing: k-core filtering + leave-one-out split.
 
-Shared by ML-1M (Week 1) and Amazon Beauty (Week 3) so both datasets go through
-the identical pipeline -- the only thing that should differ between datasets is
-the raw-file loader.
+Shared by ML-1M and Amazon Beauty so both datasets go through the identical
+pipeline -- the only thing that should differ between datasets is the raw-file
+loader.
 """
 
 import argparse

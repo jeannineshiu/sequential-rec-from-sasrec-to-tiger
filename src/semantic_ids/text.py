@@ -1,7 +1,7 @@
 """Item side-info -> one content string per internal item id.
 
-Week 5 Day 1-2. Everything downstream (embeddings, RQ codes) is keyed by the
-*internal* contiguous item id produced by preprocessing, so the join through
+Everything downstream (embeddings, RQ codes) is keyed by the *internal*
+contiguous item id produced by preprocessing, so the join through
 `data/processed/<dataset>/id_maps.json` happens here and nowhere else.
 
 Coverage is reported rather than silently patched: an item with no usable text

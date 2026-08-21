@@ -4,7 +4,7 @@
 #
 # WHY THIS RUN EXISTS
 #
-# Week 4's headline flipped depending on which SASRec BERT4Rec was compared
+# The headline flipped depending on which SASRec BERT4Rec was compared
 # against: BERT4Rec beat RecBole's SASRec (+3.39% HR@10 / +5.86% NDCG@10) but
 # merely tied this repo's (-1.95% / +1.47%). Same BERT4Rec run, opposite
 # conclusion, and the only thing that changed was the baseline.

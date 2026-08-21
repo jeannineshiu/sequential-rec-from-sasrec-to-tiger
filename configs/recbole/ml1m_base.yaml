@@ -1,4 +1,4 @@
-# Shared RecBole settings for the Week 4 BERT4Rec-vs-SASRec training-budget comparison.
+# Shared RecBole settings for the BERT4Rec-vs-SASRec training-budget comparison.
 # Model-specific overrides (epochs, model name) are passed by src/recbole_run.py.
 
 data_path: 'dataset/'

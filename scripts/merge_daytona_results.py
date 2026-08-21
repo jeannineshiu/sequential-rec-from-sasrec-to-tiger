@@ -86,7 +86,9 @@ def merge(db_path: Path, experiment: str, force: bool) -> None:
         if epochs:
             metrics["epochs_trained"] = epochs
 
-        print(f"merging {run['name']} ({run['params'].get('model')}, {run['params'].get('epochs')} epochs)")
+        print(
+            f"merging {run['name']} ({run['params'].get('model')}, {run['params'].get('epochs')} epochs)"
+        )
         log_run(
             experiment=experiment,
             run_name=run["name"],
@@ -101,7 +103,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("db", type=Path, help="mlflow_daytona_week4_<MODEL>.db to merge")
     parser.add_argument("--experiment", default="sequential-rec")
-    parser.add_argument("--force", action="store_true", help="merge even if the run name already exists")
+    parser.add_argument(
+        "--force", action="store_true", help="merge even if the run name already exists"
+    )
     args = parser.parse_args()
 
     if not args.db.exists():

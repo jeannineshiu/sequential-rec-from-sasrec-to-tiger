@@ -1,4 +1,4 @@
-"""Train SASRec or BERT4Rec via RecBole for the Week 4 training-budget comparison
+"""Train SASRec or BERT4Rec via RecBole for the training-budget comparison
 and the SASRec cross-validation check. Logs to the same MLflow experiment as our
 own training runs (tagged framework=recbole) so src/export_results.py can pull
 everything into one table.
@@ -8,6 +8,7 @@ import argparse
 import os
 import shutil
 import time
+
 
 # Cap CPU thread pools to the cores actually available to this process before
 # any numeric library is imported. In a cgroup-limited container (e.g. a 4-CPU
@@ -322,7 +323,7 @@ def run(
                 "device": str(device),
                 # Record that all budgets came from one shared trajectory.
                 "trained_to_epochs": max_epochs,
-                # Week 4 found that RecBole's per-model DEFAULTS are asymmetric --
+                # RecBole's per-model DEFAULTS are asymmetric --
                 # SASRec ships dropout 0.5, BERT4Rec 0.2, with every other
                 # architectural default identical -- and that this is the likely
                 # driver of the flipped BERT4Rec-vs-SASRec headline. Runs that
@@ -349,9 +350,7 @@ def run(
         # a multi-hour run at its very last step.
         try:
             os.makedirs("results/scores", exist_ok=True)
-            export_scores(
-                trainer, test_data, dataset, ckpt_path, f"results/scores/{run_name}.npz"
-            )
+            export_scores(trainer, test_data, dataset, ckpt_path, f"results/scores/{run_name}.npz")
         except Exception as exc:  # noqa: BLE001 - never fail a completed run over an extra
             print(f"  [warn] score export failed for {run_name}: {exc!r}", flush=True)
     return results
