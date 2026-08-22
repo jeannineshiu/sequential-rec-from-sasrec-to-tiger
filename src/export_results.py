@@ -16,8 +16,23 @@ import pandas as pd
 
 
 def load_runs(experiment: str = "sequential-rec") -> pd.DataFrame:
+    """Load every FINISHED run in the experiment.
+
+    Runs that were killed mid-training (framework crash, OOM, the box going to
+    sleep) stay in the tracking DB as RUNNING forever -- MLflow only stamps
+    end_time/status on a clean exit. They carry per-epoch validation metrics but
+    no test metrics, so before this filter they entered master.md as a row with a
+    run name and empty result columns, indistinguishable from a run whose test
+    eval genuinely produced nothing. Only FINISHED runs are reportable results.
+    """
     mlflow.set_tracking_uri("sqlite:///mlflow.db")
-    return mlflow.search_runs(experiment_names=[experiment])
+    runs = mlflow.search_runs(experiment_names=[experiment])
+    if "status" not in runs.columns:
+        return runs
+    dropped = runs[runs["status"] != "FINISHED"]
+    for _, row in dropped.iterrows():
+        print(f"Skipping {row.get('tags.mlflow.runName', '?')}: status={row['status']}")
+    return runs[runs["status"] == "FINISHED"].reset_index(drop=True)
 
 
 def _coalesce(runs: pd.DataFrame, candidates: list[str]) -> pd.Series | None:
