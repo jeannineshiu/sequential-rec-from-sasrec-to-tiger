@@ -46,6 +46,48 @@ def read_runs(db_path: Path) -> list[dict]:
     return runs
 
 
+def reconcile(run: dict, metrics: dict, experiment: str) -> None:
+    """Add fields the source db has and the already-merged run lacks.
+
+    A sandbox can gain params after its db was merged (this happened to
+    bert4rec_recbole_1x, which picked up device and trained_to_epochs later), and
+    the name guard in merge() skips such a run wholesale, so the new fields never
+    land. --force is not the answer: it writes a second run under the same name.
+    MLflow forbids overwriting an existing param, so only missing keys are added
+    and any conflict is reported rather than resolved -- a source db that
+    disagrees with the merged copy is a discrepancy to look at, not to paper over.
+    """
+    from mlflow.tracking import MlflowClient
+
+    mlflow.set_tracking_uri("sqlite:///mlflow.db")
+    client = MlflowClient()
+    exp = client.get_experiment_by_name(experiment)
+    found = client.search_runs(
+        [exp.experiment_id], filter_string=f"tags.mlflow.runName = '{run['name']}'"
+    )
+    if not found:
+        print(f"  {run['name']}: not found for reconcile")
+        return
+    target = found[0]
+
+    added = 0
+    for k, v in run["params"].items():
+        have = target.data.params.get(k)
+        if have is None:
+            client.log_param(target.info.run_id, k, v)
+            print(f"  + param {k}={v}")
+            added += 1
+        elif have != str(v):
+            print(f"  ! param {k}: source={v} merged={have} -- left alone")
+    for k, v in metrics.items():
+        safe = k.replace("@", "_at_")
+        if safe not in target.data.metrics:
+            client.log_metric(target.info.run_id, safe, v)
+            print(f"  + metric {safe}={v}")
+            added += 1
+    print(f"  {run['name']}: {added} field(s) added" if added else f"  {run['name']}: already complete")
+
+
 def existing_run_names(experiment: str) -> set[str]:
     mlflow.set_tracking_uri("sqlite:///mlflow.db")
     try:
@@ -57,7 +99,7 @@ def existing_run_names(experiment: str) -> set[str]:
     return set(df["tags.mlflow.runName"].dropna())
 
 
-def merge(db_path: Path, experiment: str, force: bool) -> None:
+def merge(db_path: Path, experiment: str, force: bool, reconcile_mode: bool = False) -> None:
     runs = read_runs(db_path)
     if not runs:
         print(
@@ -72,10 +114,6 @@ def merge(db_path: Path, experiment: str, force: bool) -> None:
         if run["status"] != "FINISHED":
             print(f"skipping {run['name']}: status={run['status']}")
             continue
-        if run["name"] in already and not force:
-            print(f"skipping {run['name']}: already in mlflow.db (use --force to add anyway)")
-            continue
-
         src = run["metrics"]
         metrics = {new: src[old] for old, new in METRIC_RENAME.items() if old in src}
 
@@ -85,6 +123,17 @@ def merge(db_path: Path, experiment: str, force: bool) -> None:
             metrics["avg_epoch_time_sec"] = src["train_time_sec"] / epochs
         if epochs:
             metrics["epochs_trained"] = epochs
+
+        if run["name"] in already and not force:
+            if reconcile_mode:
+                print(f"reconciling {run['name']}: already in mlflow.db")
+                reconcile(run, metrics, experiment)
+            else:
+                print(
+                    f"skipping {run['name']}: already in mlflow.db "
+                    "(--reconcile to fill in missing fields, --force to add anyway)"
+                )
+            continue
 
         print(
             f"merging {run['name']} ({run['params'].get('model')}, {run['params'].get('epochs')} epochs)"
@@ -106,9 +155,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--force", action="store_true", help="merge even if the run name already exists"
     )
+    parser.add_argument(
+        "--reconcile",
+        action="store_true",
+        help="for runs already in mlflow.db, add any params/metrics the source db has and they lack",
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
         print(f"{args.db} not found", file=sys.stderr)
         sys.exit(1)
-    merge(args.db, args.experiment, args.force)
+    merge(args.db, args.experiment, args.force, args.reconcile)
