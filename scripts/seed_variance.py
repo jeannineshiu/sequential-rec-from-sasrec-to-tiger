@@ -65,6 +65,17 @@ CLAIMED_MARGINS = [
     ("CE vs BCE loss, full NDCG@10", 32.29, "full", "loss ablation"),
     ("Residual: RecBole vs CE, full HR@10", 14.30, "full", "loss ablation"),
     ("Residual: RecBole vs CE, full NDCG@10", 16.06, "full", "loss ablation"),
+    # The three architecture arms, each one field against the CE control. Every
+    # full-ranking delta is expected INSIDE NOISE -- that is the finding, not a
+    # failure of the check, so these rows exist to keep the negative result
+    # honest if the floor is ever re-measured with more seeds.
+    ("P1b width64 vs CE, sampled NDCG@10", 1.14, "sampled", "architecture arms"),
+    ("P1b batch19 vs CE, full HR@10", -0.33, "full", "architecture arms"),
+    ("P1b batch19 vs CE, full NDCG@10", -0.46, "full", "architecture arms"),
+    ("P1b width64 vs CE, full HR@10", 3.33, "full", "architecture arms"),
+    ("P1b width64 vs CE, full NDCG@10", 2.57, "full", "architecture arms"),
+    ("P1b heads2 vs CE, full HR@10", -0.16, "full", "architecture arms"),
+    ("P1b heads2 vs CE, full NDCG@10", 0.69, "full", "architecture arms"),
     # Ablations, all measured against the 100-epoch baseline
     # (`ablation_ml1m_baseline_100ep`) so both sides share a budget. The table
     # originally compared them against the 200-epoch headline run, which inflated
