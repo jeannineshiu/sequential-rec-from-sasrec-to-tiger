@@ -202,8 +202,8 @@ line. It accounts for **56% of the full HR@10 gap and 60% of the full NDCG@10 ga
 It does not account for all of it. The residual (+14.30% / +16.06%) is four to five times the
 full-ranking noise floor, so it is real, and what remains on the table is architecture and batch
 size. The suspect named in earlier versions of this README was the right one, but it was never the
-only one. The next section tests the remaining config-visible suspects one at a time and finds that
-none of them accounts for the residual either.
+only one. The next section tests the remaining config-visible suspects one at a time: width is real
+and worth about a sixth of the residual, and the other two are still unresolved.
 
 Two things worth taking from this beyond the attribution. **Sampled HR@10 cannot see this at all** —
 the two objectives tie on it (−0.38%, inside noise) while diverging by 22.54% on full ranking.
@@ -220,7 +220,7 @@ is the conservative direction.
 Reproduce: `uv run python -m src.train --config configs/ablation/sasrec_ml1m_loss_ce.yaml`
 (~56 min on an M-series GPU).
 
-### The architecture residual: three arms, no culprit
+### The architecture residual: width is real, and small
 
 The objective left +14.30% HR@10 / +16.06% NDCG@10 on the table against RecBole. The named suspects
 were width (64 vs 50), head count (2 vs 1) and update granularity. Each gets one arm, single-variable
@@ -234,41 +234,65 @@ besides.
 
 | ML-1M, test, k=10 | CE (control) | batch19 | width64 | heads2 | RecBole |
 |---|---|---|---|---|---|
-| sampled HR@10 | 0.8159 | 0.8166 ~ | 0.8199 ~ | 0.8169 ~ | 0.8240 |
-| sampled NDCG@10 | 0.6133 | 0.6114 ~ | **0.6203** +1.14% | 0.6140 ~ | 0.6389 |
-| full HR@10 | 0.3033 | 0.3023 ~ | 0.3134 ~ | 0.3028 ~ | 0.3467 |
-| full NDCG@10 | 0.1749 | 0.1741 ~ | 0.1794 ~ | 0.1761 ~ | 0.2029 |
+| sampled HR@10 | 0.8159 | 0.8166 | 0.8199 | 0.8169 | 0.8240 |
+| sampled NDCG@10 | 0.6133 | 0.6114 | 0.6203 | 0.6140 | 0.6389 |
+| full HR@10 | 0.3033 | 0.3023 | 0.3134 | 0.3028 | 0.3467 |
+| full NDCG@10 | 0.1749 | 0.1741 | 0.1794 | 0.1761 | 0.2029 |
 | epochs trained | 200 | 116 | 146 | 200 | 200 |
 
-`~` marks a difference inside the seed-noise floor (0.96% sampled, 3.37% full).
+Single seed, every arm, and on the repo's blanket noise floor (3.37% full-ranking) every one of these
+full-ranking deltas reads as noise. **That verdict was wrong, and the reason is worth more than the
+result.** The 3.37% floor is 2·√2·σ measured on five seeds of the *BCE baseline*, applied to CE runs
+as a proxy. It does not describe them. Three seeds per arm of the two configurations that actually
+matter here give:
 
-**Every full-ranking result here is inside the noise floor.** The largest, width64's +3.33% on full
-HR@10, sits just under the 3.37% floor; +2.57% on full NDCG@10 is further inside it. On one seed
-none of these three is distinguishable from re-running the control with a different initialization.
-Taken at face value anyway, the three deltas sum to +2.84% HR@10 and +2.80% NDCG@10 against a
-residual of +14.30% / +16.06% — under a fifth of it, from a sum that is itself within noise.
+| full-ranking, 3 seeds each | width64 | CE control |
+|---|---|---|
+| HR@10 mean | 0.3109 | 0.3027 |
+| HR@10 rel. std | 0.92% | **0.19%** |
+| NDCG@10 mean | 0.1787 | 0.1739 |
+| NDCG@10 rel. std | 0.61% | 0.58% |
 
-So the architecture story that motivated these arms does not hold up. Width, heads and update
-granularity were the three differences visible in the config diff, and none of them carries the
-residual. What remains uncontrolled is the FFN inner size (RecBole 256, here tied to hidden_dim) and
-RecBole's per-position sequence augmentation, which yields 981,491 training targets per epoch
-against this repo's 647,430 — a difference in what an epoch *is* that no arm here controls, and the
-larger suspect now that the config-visible ones have been eliminated.
+The CE control's seed-to-seed spread on full HR@10 is **0.19%, not 1.19%** — CE is roughly six times
+more reproducible there than BCE is. The blanket floor was too wide by enough to hide the effect.
 
-Three cautions, because a negative result invites over-reading:
+| width64 vs CE control, 3 seeds each | Δ | 95% CI | p (Welch) |
+|---|---|---|---|
+| sampled HR@10 | +0.22% | [−0.24%, +0.69%] | 0.25 |
+| sampled NDCG@10 | +0.82% | [+0.31%, +1.33%] | 0.017 |
+| full HR@10 | **+2.72%** | [+0.48%, +4.96%] | 0.034 |
+| full NDCG@10 | **+2.74%** | [+1.37%, +4.11%] | 0.005 |
 
-- **The deltas are not additive and the arms are not RecBole.** RecBole runs 2 heads *at* d=64;
-  width64 changes width at 1 head, heads2 changes heads at d=50. No arm tests the combination, so
-  "the three sum to less than the residual" bounds nothing about their interaction.
-- **The arms did not share a budget.** Early stopping (patience 20) ended batch19 at 116 epochs and
-  width64 at 146; heads2 and the control ran the full 200. A cheaper arm is not obviously a worse
-  one, but the comparison is not budget-matched the way the loss ablation was.
-- **One seed each.** The floor being applied comes from five seeds of the *baseline* configuration;
-  no arm here was repeated. Establishing that width64's +3.33% is or is not real needs seeds, not
-  more arms.
+**Width is a real effect and a small one.** At three seeds it clears significance on both
+full-ranking metrics, and the point estimate drops from the single-seed +3.33% to +2.72% — the one
+seed was on the lucky side. Against the residual it buys **18.7% of the full HR@10 gap and 16.4% of
+the NDCG@10 gap**: real, and nowhere near enough. Note also that sampled HR@10 cannot see it
+(+0.22%, p=0.25) while full HR@10 can — the same blindness the loss ablation ran into, reappearing
+for a change of a different kind.
+
+`batch19` and `heads2` remain at one seed each. Their deltas are small (−0.33% and −0.16% on full
+HR@10), but with a control that reproduces to 0.19% it is no longer safe to call them noise — the
+tighter variance that rescued width64 applies to them too, and neither has been re-run. **They are
+unresolved, not null.**
+
+What stays uncontrolled is the FFN inner size (RecBole 256, here tied to hidden_dim) and RecBole's
+per-position sequence augmentation, which yields 981,491 training targets per epoch against this
+repo's 647,430 — a difference in what an epoch *is*. Neither is a config field to flip, and after
+width they are the larger remaining suspects.
+
+Two cautions:
+
+- **Three seeds is a small sample and the Welch df are 2-4.** The CIs are correspondingly wide: full
+  HR@10's lower bound is +0.48%, so "real" here means the sign is established, not the magnitude.
+- **No arm is RecBole.** RecBole runs 2 heads *at* d=64; width64 changes width at 1 head, heads2
+  changes heads at d=50. The combination is untested, so the arms cannot be summed and the 18.7%
+  share is not a budget the remaining differences must fit inside.
 
 Reproduce: `uv run python -m src.train --config configs/ablation/sasrec_ml1m_ce_{batch19,width64,heads2}.yaml`
-(~30-55 min each on an M-series GPU).
+(~30-55 min each), and for the seed check add `--seed N --run-name <name>_seedN` (the run name must
+be overridden alongside the seed, or each seed overwrites the previous checkpoint). The seeded
+comparison is regenerated by
+`uv run python -m scripts.seed_variance --arm-seeds ablation_ml1m_ce_width64 ablation_ml1m_loss_ce`.
 
 ### Atomic vs semantic IDs — Amazon Beauty, test, k=10
 
@@ -558,19 +582,25 @@ sandboxes via `scripts/daytona_*.py`, with result recovery for interrupted runs.
 Kept current, on the principle that a mixed result reported is worth more than a clean result
 implied.
 
-- **40% of the full-ranking divergence between the two SASRecs is still unattributed, and the
-  obvious suspects have been eliminated.** The loss-only ablation accounts for 56% of the HR@10 gap
-  and 60% of the NDCG@10 gap; the residual (+14.30% / +16.06%) is four to five times the noise floor
-  and therefore real. All three architecture arms have now been trained (width, head count, update
-  granularity) and every full-ranking delta landed inside the noise floor -- see "The architecture
-  residual" above. The residual is real and now has no candidate explanation that has been measured.
-  FFN inner size (RecBole 256, here tied to hidden_dim) and RecBole's per-position augmentation
-  (981,491 targets per epoch against 647,430) are the remaining uncontrolled differences; neither has
-  a config to flip, since both would change the model or the data pipeline rather than a setting.
-- **The architecture arms are one seed each and not budget-matched.** width64's +3.33% on full HR@10
-  is the only delta close to the 3.37% floor, and separating it from noise needs repeated seeds
-  rather than further arms. Early stopping also gave the arms 116-200 epochs against the control's
-  200, so unlike the loss ablation this comparison is not budget-matched.
+- **Roughly a third of the full-ranking divergence between the two SASRecs is still unattributed.**
+  The loss ablation accounts for 56% of the HR@10 gap and 60% of the NDCG@10 gap. Width, measured at
+  three seeds per arm, accounts for a further 18.7% of the HR@10 residual and 16.4% of the NDCG@10
+  residual. What remains has no measured explanation. FFN inner size (RecBole 256, here tied to
+  hidden_dim) and RecBole's per-position augmentation (981,491 targets per epoch against 647,430) are
+  the remaining uncontrolled differences; neither is a config field to flip, since both would change
+  the model or the data pipeline rather than a setting.
+- **batch19 and heads2 are one seed each and their verdicts are unresolved.** Both were first read as
+  "inside the noise floor", but that floor (3.37% full-ranking) is measured on the BCE baseline and
+  applied to CE runs as a proxy; the CE control actually reproduces to 0.19% on full HR@10. That
+  correction is what turned width64 from noise into a p=0.03 effect, and it applies to the other two
+  arms as well -- they have not been re-run, so their small deltas are untested, not null.
+- **The seeded comparison is three seeds, and the arms are not budget-matched.** Welch df are 2-4 and
+  full HR@10's 95% CI runs [+0.48%, +4.96%], so width's sign is established and its magnitude is not.
+  Early stopping also gave the arms 116-200 epochs against the control's 200.
+- **The blanket noise floor is a proxy wherever the configuration is not the BCE baseline.** The
+  0.96% / 3.37% figures come from five seeds of one configuration and are applied across RecBole runs,
+  Beauty, and CE runs alike. The width64 episode shows that can be wrong in the direction that hides
+  real effects, not only the direction that invents them.
 - **The loss ablation is matched-budget, not converged.** Both arms are still improving at epoch
   200. CE's advantage is measured where BCE has not finished training, which understates BCE — the
   conservative direction for the claim being made, but not a converged comparison.
