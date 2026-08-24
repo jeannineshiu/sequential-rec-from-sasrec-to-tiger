@@ -552,9 +552,7 @@ if __name__ == "__main__":
     if args.detached:
         # Autonomous path: one sandbox per model, fire-and-forget. Results come back
         # via GitHub (mlflow_daytona_week4_<MODEL>.db), not a local download.
-        main_detached(
-            models, budget_map, configs=args.config, run_tag=args.run_tag, seed=args.seed
-        )
+        main_detached(models, budget_map, configs=args.config, run_tag=args.run_tag, seed=args.seed)
     else:
         # Local-driven path: distinct db filename per variant so parallel per-model
         # runs (and smoke runs) don't clobber each other's downloads.
