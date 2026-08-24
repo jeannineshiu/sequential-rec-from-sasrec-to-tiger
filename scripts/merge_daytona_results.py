@@ -85,7 +85,11 @@ def reconcile(run: dict, metrics: dict, experiment: str) -> None:
             client.log_metric(target.info.run_id, safe, v)
             print(f"  + metric {safe}={v}")
             added += 1
-    print(f"  {run['name']}: {added} field(s) added" if added else f"  {run['name']}: already complete")
+    print(
+        f"  {run['name']}: {added} field(s) added"
+        if added
+        else f"  {run['name']}: already complete"
+    )
 
 
 def existing_run_names(experiment: str) -> set[str]:
