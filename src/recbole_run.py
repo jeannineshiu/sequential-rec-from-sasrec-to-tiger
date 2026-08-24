@@ -263,7 +263,12 @@ def run(
     def snapshot_milestone(epoch_idx: int, valid_score: float) -> None:
         completed = epoch_idx + 1  # epoch_idx is 0-based
         if completed in milestone_names and trainer.best_valid_result is not None:
-            frozen = os.path.join(config["checkpoint_dir"], f"{model_name}-budget-{completed}.pth")
+            # Seed in the filename: two seeds of the same model/budget would
+            # otherwise write the same frozen path, and a second run would evaluate
+            # the first one's weights if the runs ever overlap.
+            frozen = os.path.join(
+                config["checkpoint_dir"], f"{model_name}-budget-{completed}-seed{seed}.pth"
+            )
             shutil.copyfile(trainer.saved_model_file, frozen)
             snapshots[completed] = (frozen, dict(trainer.best_valid_result))
             print(
@@ -323,6 +328,7 @@ def run(
                 "device": str(device),
                 # Record that all budgets came from one shared trajectory.
                 "trained_to_epochs": max_epochs,
+                "seed": seed,
                 # RecBole's per-model DEFAULTS are asymmetric --
                 # SASRec ships dropout 0.5, BERT4Rec 0.2, with every other
                 # architectural default identical -- and that this is the likely
@@ -368,6 +374,13 @@ if __name__ == "__main__":
     # Comma-separated, applied left-to-right so later files override earlier ones:
     # "configs/recbole/ml1m_base.yaml,configs/recbole/ml1m_sasrec_dropout02.yaml".
     parser.add_argument("--config", type=str, default="configs/recbole/ml1m_base.yaml")
+    # Seeded repeats. `run()` always took a seed; it was simply not reachable from
+    # the CLI, so every RecBole number in the repo is seed 42. Note that the seed
+    # also drives RecBole's own uni100 evaluation draw, so the uni100 metrics of two
+    # seeds differ by training noise AND negative-draw noise. The fixed-negative and
+    # full-ranking numbers from scripts/rescore_recbole.py do not: those isolate
+    # training noise, which is what the noise floor is meant to describe.
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     if args.budgets:
@@ -379,4 +392,4 @@ if __name__ == "__main__":
         budgets = [(args.epochs, args.run_name)]
     else:
         parser.error("provide either --budgets or both --epochs and --run-name")
-    run(args.model, budgets, config_paths=[p for p in args.config.split(",") if p])
+    run(args.model, budgets, config_paths=[p for p in args.config.split(",") if p], seed=args.seed)

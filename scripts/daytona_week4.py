@@ -343,7 +343,11 @@ def budgets_arg_for(budget_map: dict, model: str) -> str:
 
 
 def main(
-    models: list[str], budget_map: dict, local_db_path: str, configs: str | None = None
+    models: list[str],
+    budget_map: dict,
+    local_db_path: str,
+    configs: str | None = None,
+    seed: int = 42,
 ) -> None:
     """Local-driven path: this process stays connected, streams progress, and
     downloads mlflow.db. Needs the laptop awake for the whole run. See
@@ -367,7 +371,7 @@ def main(
                 sandbox,
                 train_session,
                 f"{UV} run python -m src.recbole_run --model {model} "
-                f"--budgets {budgets_arg_for(budget_map, model)}"
+                f"--budgets {budgets_arg_for(budget_map, model)} --seed {seed}"
                 + (f" --config {configs}" if configs else ""),
                 cwd=REPO_DIR,
             )
@@ -390,6 +394,7 @@ def main_detached(
     budget_map: dict,
     configs: str | None = None,
     run_tag: str | None = None,
+    seed: int = 42,
 ) -> None:
     """Autonomous, Mac-independent path. For each model: provision a sandbox, then
     launch scripts/daytona_remote_runner.sh DETACHED inside it (nohup + run_async)
@@ -429,6 +434,9 @@ def main_detached(
             f"export RECBOLE_NUM_THREADS={TRAIN_THREADS}\n"
             f"export OMP_NUM_THREADS={TRAIN_THREADS}\n"
             f"export SANDBOX_ID={sandbox.id}\n"
+            # Seeded repeats: the runner defaults SEED to 42, which is what every
+            # existing RecBole run used, so an unseeded relaunch is unchanged.
+            f"export SEED={seed}\n"
             # Only set when overridden: the runner defaults CONFIGS to the base
             # config and RUN_TAG to MODEL, so an unmodified sweep behaves exactly
             # as before these knobs existed.
@@ -517,6 +525,14 @@ if __name__ == "__main__":
         "Defaults to the model name. Set it for a variant run so it does not overwrite "
         "the default-config run's results for the same model.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Training seed for src.recbole_run. Every RecBole number in the repo is "
+        "seed 42; pass 1, 2, ... with a distinct --run-tag and --budgets run_name to "
+        "measure RecBole's own seed spread instead of borrowing this repo's.",
+    )
     args = parser.parse_args()
 
     budget_map = SMOKE_BUDGETS if args.smoke else BUDGETS
@@ -536,7 +552,9 @@ if __name__ == "__main__":
     if args.detached:
         # Autonomous path: one sandbox per model, fire-and-forget. Results come back
         # via GitHub (mlflow_daytona_week4_<MODEL>.db), not a local download.
-        main_detached(models, budget_map, configs=args.config, run_tag=args.run_tag)
+        main_detached(
+            models, budget_map, configs=args.config, run_tag=args.run_tag, seed=args.seed
+        )
     else:
         # Local-driven path: distinct db filename per variant so parallel per-model
         # runs (and smoke runs) don't clobber each other's downloads.
@@ -544,4 +562,4 @@ if __name__ == "__main__":
             "_smoke" if args.smoke else ""
         )
         db_path = f"mlflow_daytona_week4{suffix}.db"
-        main(models, budget_map, db_path, configs=args.config)
+        main(models, budget_map, db_path, configs=args.config, seed=args.seed)

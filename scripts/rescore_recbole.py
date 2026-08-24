@@ -170,6 +170,16 @@ if __name__ == "__main__":
     parser.add_argument("npz", type=Path, help="results/scores/<run_name>.npz")
     parser.add_argument("--raw-dir", type=Path, default=Path("data/raw/ml-1m"))
     parser.add_argument("--processed-dir", type=Path, default=Path("data/processed/ml-1m"))
+    # Default naming is "<npz stem>_ourprotocol", which puts a seeded training run at
+    # "<...>_seed1_ourprotocol". scripts/seed_variance.py collects a family as
+    # "<prefix>" plus "<prefix>_seed<N>", so a seeded rescore has to be logged as
+    # "<...>_ourprotocol_seed1" to be picked up. Override the name rather than
+    # rename the training run, which is not "our protocol" in any sense.
+    parser.add_argument(
+        "--run-name",
+        default=None,
+        help="MLflow run name for the rescored run (default: '<npz stem>_ourprotocol')",
+    )
     parser.add_argument(
         "--log-mlflow",
         action="store_true",
@@ -197,7 +207,7 @@ if __name__ == "__main__":
 
         log_run(
             experiment="sequential-rec",
-            run_name=f"{args.npz.stem}_ourprotocol",
+            run_name=args.run_name or f"{args.npz.stem}_ourprotocol",
             params={
                 "model": "SASRec",
                 "dataset": "ml-1m",

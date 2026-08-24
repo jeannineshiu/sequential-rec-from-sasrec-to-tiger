@@ -19,6 +19,9 @@
 #   CONFIGS          comma-separated RecBole config files, layered left-to-right
 #                    (default: configs/recbole/ml1m_base.yaml)
 #   RUN_TAG          names the results file and DONE marker (default: $MODEL)
+#   SEED             training seed passed to recbole_run (default: 42). Every RecBole
+#                    number in the repo is seed 42; seeded repeats exist to measure
+#                    this framework's own spread instead of borrowing one.
 #
 # Results land in the repo as mlflow_daytona_week4_<RUN_TAG>.db on branch main, plus
 # a WEEK4_<RUN_TAG>_DONE marker commit. Watch progress by pulling the repo, or SSH
@@ -35,10 +38,11 @@ CONFIGS="${CONFIGS:-configs/recbole/ml1m_base.yaml}"
 # results file on MODEL alone would overwrite the previous SASRec run's db and
 # DONE marker in the repo. RUN_TAG separates them.
 RUN_TAG="${RUN_TAG:-$MODEL}"
+SEED="${SEED:-42}"
 LOCAL_DB="mlflow_daytona_week4_${RUN_TAG}.db"
 
 echo "=== Week 4 autonomous runner: model=${MODEL} tag=${RUN_TAG} budgets=${BUDGETS} ==="
-echo "=== configs: ${CONFIGS} ==="
+echo "=== configs: ${CONFIGS} seed: ${SEED} ==="
 
 # Tracks whether the results db is safely off this sandbox. self_stop refuses to
 # delete the sandbox unless this is 1 -- see the comment on self_stop.
@@ -153,7 +157,7 @@ echo "=== convert_to_atomic ==="
 
 # One trajectory to the largest budget; recbole_run logs every budget milestone.
 echo "=== training: ${MODEL} (${BUDGETS}) ==="
-if "$UV" run python -m src.recbole_run --model "$MODEL" --budgets "$BUDGETS" --config "$CONFIGS"; then
+if "$UV" run python -m src.recbole_run --model "$MODEL" --budgets "$BUDGETS" --config "$CONFIGS" --seed "$SEED"; then
   echo "  -> ${MODEL} training complete"
 else
   echo "  -> WARNING: ${MODEL} training FAILED (exit $?) -- pushing whatever synced, then stopping"
