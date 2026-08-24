@@ -165,6 +165,10 @@ own, arguably more useful finding. Read it that way, not as a verdict.
 | SASRec (this repo) | 0.2475 | 0.1322 |
 | SASRec (RecBole, dropout 0.2, rescored) | **0.3467** | **0.2029** |
 
+Both rows are seed 42, so the comparison is like for like. RecBole's row has since been run at three
+seeds: full HR@10 comes out at 0.3507 mean (0.3467 / 0.3474 / 0.3581), and **seed 42 is the lowest
+of the three**, so the gap below is if anything understated.
+
 +40% / +53% for a pair that agrees to +0.61% on sampled HR@10. The divergence grows monotonically
 with how much the metric cares about *where* in the ranking the target lands, which points at the
 training objective — full-catalog cross-entropy (RecBole) vs BCE against one sampled negative (this
@@ -199,9 +203,11 @@ shape of the cross-framework gap**: nothing on sampled HR@10, a large gain on fu
 NDCG gaining more than HR — the same monotone-in-rank-sensitivity pattern, from a single changed
 line. It accounts for **56% of the full HR@10 gap and 60% of the full NDCG@10 gap**.
 
-It does not account for all of it. The residual (+14.30% / +16.06%) is four to five times the
-full-ranking noise floor, so it is real, and what remains on the table is architecture and batch
-size. The suspect named in earlier versions of this README was the right one, but it was never the
+It does not account for all of it. The residual is +14.30% / +16.06% seed-42-to-seed-42, and
+**+15.87% / +17.16%** on three-seed means now that RecBole has seeds of its own. Either way it
+clears the floor for this particular comparison — 3.84%, built from RecBole's measured 1.83%
+full-ranking spread and CE's 0.58% rather than from one blanket number — so it is real, and what
+remains on the table is architecture and batch size. The suspect named in earlier versions of this README was the right one, but it was never the
 only one. The next section tests the remaining config-visible suspects one at a time, three seeds
 each: width is real and worth about a sixth of the residual, batch size is null, and head count is
 too noisy an arm for three seeds to settle.
@@ -240,6 +246,9 @@ besides.
 | full HR@10 | 0.3033 | 0.3023 | 0.3134 | 0.3028 | 0.3467 |
 | full NDCG@10 | 0.1749 | 0.1741 | 0.1794 | 0.1761 | 0.2029 |
 | epochs trained | 200 | 116 | 146 | 200 | 200 |
+
+The RecBole column is seed 42; at three seeds its full-ranking means are 0.3507 / 0.2037, so the
+share-of-residual figures below are computed against a target that is itself ±1.83% per run.
 
 That was one seed per arm, and on the repo's blanket noise floor (3.37% full-ranking) every one of
 these full-ranking deltas reads as noise. **That verdict was wrong, and the reason is worth more than
@@ -484,8 +493,10 @@ look.
 
 ### Ablations — ML-1M, test, k=10, all rows at 100 epochs
 
-Deltas against the 100-epoch baseline and marked against the measured noise floor (sampled 0.96%,
-full 3.37%). `~` means inside seed noise.
+Deltas against the 100-epoch baseline, marked against the BCE baseline's floor (sampled 0.96%,
+full 3.37%). `~` means inside seed noise. Both sides of every delta are that configuration, so the
+floor is the right family — but it was measured at 200 epochs, not the 100 these rows share, and no
+ablation arm has a second seed of its own.
 
 | Ablation | sampled HR@10 | Δ | full HR@10 | Δ | avg s/epoch |
 |---|---|---|---|---|---|
@@ -522,8 +533,33 @@ frozen, so this is training noise alone.
 **Full-ranking metrics are ~4× noisier than sampled ones** — separating 3,416 items is far more
 sensitive to initialization than separating 101. Comparisons here are between two runs each
 measured once, so the relevant floor is 2·√2·σ: **0.96% sampled, 3.37% full**.
-`uv run python -m scripts.seed_variance` re-checks every margin claimed in this repo against it.
-Five seeds estimate σ loosely — this is a sanity floor, not a significance test.
+
+**That floor describes this configuration and no other, and treating it as a constant of the repo
+was wrong in both directions.** Every configuration with three or more seeds now carries its own:
+
+| configuration | seeds | sampled | full |
+|---|---|---|---|
+| SASRec, BCE, 200ep (the floor above) | 5 | 0.34% | 1.19% |
+| SASRec, CE control | 3 | 0.22% | **0.58%** |
+| CE + hidden_dim 64 | 3 | 0.23% | 0.92% |
+| CE + batch_size 19 | 3 | 0.33% | 0.71% |
+| CE + 2 heads | 3 | 0.50% | **1.32%** |
+| RecBole SASRec, dropout 0.2, rescored here | 3 | 0.23% | **1.83%** |
+| RecBole SASRec, dropout 0.2, RecBole's own uni100 | 3 | 0.24% | — |
+
+Per-run relative standard deviation, worst metric per protocol. Read the full-ranking column: it
+spans **0.58% to 1.83%**, a factor of three across configurations that differ by one field or one
+framework. Borrowing the BCE baseline's 1.19% overstates the CE family's noise by 2× — which is how
+`width64`'s real effect spent a day misfiled as noise — and *understates* RecBole's by 1.5×, which
+would wave through a full-ranking margin RecBole's own seeds cannot support. Both directions of
+error, from one borrowed number. There is no corrected constant, only per-configuration spreads.
+
+So `scripts/seed_variance.py` no longer judges every margin against one floor. Each claimed margin
+names the two configurations it compares and is checked against 2·√(σ_a² + σ_b²) — which collapses
+to the familiar 2·√2·σ only when both sides have the same spread. Rows where one side has no seeds
+of its own are printed as `borrowed`, so it stays visible which verdicts are still proxies.
+`uv run python -m scripts.seed_variance` prints all of it. Three to five seeds estimate σ loosely —
+these are sanity floors, not significance tests, and the seeded arms carry Welch tests as well.
 
 ### Semantic ID quality
 
@@ -646,13 +682,14 @@ implied.
 - **The seeded comparison is three seeds, and the arms are not budget-matched.** Welch df are 2-4 and
   full HR@10's 95% CI runs [+0.48%, +4.96%], so width's sign is established and its magnitude is not.
   Early stopping also gave the arms 82-200 epochs against the control's 200.
-- **The blanket noise floor is a proxy wherever the configuration is not the BCE baseline.** The
-  0.96% / 3.37% figures come from five seeds of one configuration and are applied across RecBole runs,
-  Beauty, and CE runs alike. The width64 episode shows that can be wrong in the direction that hides
-  real effects, not only the direction that invents them. The four configurations with three seeds
-  each now span 0.19% to 1.32% relative std on full HR@10, so there is no single replacement value
-  either -- every margin quoted against the blanket floor anywhere else in this README (the ablation
-  table, the RecBole cross-checks, Beauty) carries that caveat and none of those arms are seeded.
+- **The blanket noise floor is retired, and what replaced it is still partial.** The 0.96% / 3.37%
+  figures come from five seeds of one configuration, and applying them elsewhere was wrong in both
+  directions: too wide for the CE family (hiding width64's real effect) and too narrow for RecBole's
+  full-ranking numbers (1.83% per run against the borrowed 1.19%). Seven configurations now carry
+  their own measured spread and every margin is judged against the two it actually compares. What is
+  still unmeasured: **all of Beauty**, RecBole's dropout-0.5 and BERT4Rec runs, and the ablation arms
+  at their own 100-epoch budget. Those rows print as `borrowed` in `seed_variance` rather than being
+  quietly proxied, but borrowed is what they remain.
 - **The loss ablation is matched-budget, not converged.** Both arms are still improving at epoch
   200. CE's advantage is measured where BCE has not finished training, which understates BCE — the
   conservative direction for the claim being made, but not a converged comparison.
@@ -667,9 +704,12 @@ implied.
   that the SASRec-vs-BERT4Rec ordering survives full-catalog evaluation. The cross-framework
   comparison also varies loss, batch size and architecture at once. Full accounting in
   [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md) §4.
-- **Every RecBole number is a single seed.** The 0.96% / 3.37% floors come from five seeds of *this
-  repo's* SASRec on ML-1M and are applied to RecBole runs and to Beauty as a proxy — different
-  models, frameworks, datasets. Indicative there, not measured.
+- **RecBole's dropout-0.2 run now has three seeds; every other RecBole number is still one.** The
+  dropout-0.2 SASRec was re-run at seeds 1 and 2, which is what put a measured floor under the
+  headline margin it carries (+3.71% / +6.33% on uni100, against that configuration's own 0.67%
+  floor — 5.5× and 17× clear). It also revealed that RecBole's full-ranking spread is the widest
+  measured here. The dropout-0.5 SASRec, both BERT4Rec runs, and all of Beauty remain single-seed,
+  so any margin involving them is still judged against a borrowed floor.
 - **Ablations are a statement about 100-epoch training.** Deliberate compute saving; both sides of
   every delta share the budget, but the popularity-negatives result in particular may be a
   convergence-speed effect rather than a final ranking.

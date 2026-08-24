@@ -46,65 +46,187 @@ METRICS = [
 # The protocol matters: full-ranking metrics are roughly 4x noisier than sampled
 # ones here, so a single global floor would be far too strict for sampled margins
 # and far too loose for full-ranking ones.
+# Each margin names the two CONFIGURATIONS it compares, so it can be judged against
+# their own measured spread instead of one blanket number.
+#
+# Why this replaces a single floor: the blanket 0.96%/3.37% figures are five seeds of
+# the BCE baseline, and applying them elsewhere is wrong in BOTH directions. On the CE
+# control the true full HR@10 spread is 0.19%, so the blanket floor was far too wide
+# and hid width64's real effect for a day. On RecBole's dropout-0.2 runs it is 1.83%,
+# so the blanket floor was too NARROW and would wave through a full-ranking margin that
+# its own seeds cannot support. There is no constant that fixes both.
+#
+# side_a / side_b name a family in FAMILIES, or None where that configuration has no
+# seeds of its own -- printed as "borrowed" rather than quietly using a proxy.
+# (label, relative % difference, protocol, where it is claimed, side_a, side_b)
 CLAIMED_MARGINS = [
-    ("Dropout default 0.5 -> 0.2, HR@10", 3.71, "sampled", "README headline"),
-    ("Dropout default 0.5 -> 0.2, NDCG@10", 6.33, "sampled", "README headline"),
-    ("BERT4Rec vs default SASRec, HR@10", 3.39, "sampled", "controversy doc"),
-    ("SASRec vs BERT4Rec at matched dropout, HR@10", 0.31, "sampled", "controversy doc"),
-    ("M4 cross-check: RecBole vs this repo, HR@10", 0.61, "sampled", "M4 criterion"),
-    ("M4 cross-check: RecBole vs this repo, NDCG@10", 7.41, "sampled", "M4 criterion"),
-    ("Loss effect?: RecBole vs this repo, full HR@10", 40.07, "full", "controversy doc"),
+    (
+        "Dropout default 0.5 -> 0.2, HR@10",
+        3.71,
+        "sampled",
+        "README headline",
+        "recbole_d02_uni100",
+        None,
+    ),
+    (
+        "Dropout default 0.5 -> 0.2, NDCG@10",
+        6.33,
+        "sampled",
+        "README headline",
+        "recbole_d02_uni100",
+        None,
+    ),
+    ("BERT4Rec vs default SASRec, HR@10", 3.39, "sampled", "controversy doc", None, None),
+    (
+        "SASRec vs BERT4Rec at matched dropout, HR@10",
+        0.31,
+        "sampled",
+        "controversy doc",
+        "recbole_d02_uni100",
+        None,
+    ),
+    (
+        "M4 cross-check: RecBole vs this repo, HR@10",
+        0.61,
+        "sampled",
+        "M4 criterion",
+        "recbole_d02",
+        "bce",
+    ),
+    (
+        "M4 cross-check: RecBole vs this repo, NDCG@10",
+        7.41,
+        "sampled",
+        "M4 criterion",
+        "recbole_d02",
+        "bce",
+    ),
+    (
+        "Loss effect?: RecBole vs this repo, full HR@10",
+        40.07,
+        "full",
+        "controversy doc",
+        "recbole_d02",
+        "bce",
+    ),
     # The loss-only ablation (configs/ablation/sasrec_ml1m_loss_ce.yaml): the same
     # model, seed, schedule and data as `sasrec_ml1m`, trained with a full-catalog
-    # softmax instead of BCE against one sampled negative. The residual rows are
-    # what RecBole still has left over CE, i.e. the part the objective does NOT
+    # softmax instead of BCE against one sampled negative.
+    ("CE vs BCE loss, sampled HR@10", -0.38, "sampled", "loss ablation", "ce", "bce"),
+    ("CE vs BCE loss, sampled NDCG@10", 3.10, "sampled", "loss ablation", "ce", "bce"),
+    ("CE vs BCE loss, full HR@10", 22.54, "full", "loss ablation", "ce", "bce"),
+    ("CE vs BCE loss, full NDCG@10", 32.29, "full", "loss ablation", "ce", "bce"),
+    # The residual RecBole still has over CE, i.e. the part the objective does NOT
     # explain -- architecture (d=64 vs 50, 2 heads vs 1, inner 256) and batch size.
-    ("CE vs BCE loss, sampled HR@10", -0.38, "sampled", "loss ablation"),
-    ("CE vs BCE loss, sampled NDCG@10", 3.10, "sampled", "loss ablation"),
-    ("CE vs BCE loss, full HR@10", 22.54, "full", "loss ablation"),
-    ("CE vs BCE loss, full NDCG@10", 32.29, "full", "loss ablation"),
-    ("Residual: RecBole vs CE, full HR@10", 14.30, "full", "loss ablation"),
-    ("Residual: RecBole vs CE, full NDCG@10", 16.06, "full", "loss ablation"),
-    # The three architecture arms, each one field against the CE control.
-    #
-    # These rows are checked against the BLANKET floor below, which is measured on
-    # five seeds of the BCE baseline. For the CE configurations it is a proxy and a
-    # bad one: three seeds of the CE control put its full HR@10 spread at 0.18%,
-    # not 1.19%, and width64's effect is significant (p=0.03) despite reading as
-    # "INSIDE NOISE" here. The rows are kept because the blanket verdict is what
-    # the rest of the repo quotes, and seeing it disagree with the measured result
-    # is the point -- see "The architecture residual" in README.md.
-    ("P1b width64 vs CE, sampled NDCG@10", 1.14, "sampled", "architecture arms"),
-    ("P1b batch19 vs CE, full HR@10", -0.33, "full", "architecture arms (1 seed)"),
-    ("P1b batch19 vs CE, full NDCG@10", -0.46, "full", "architecture arms (1 seed)"),
-    ("P1b width64 vs CE, full HR@10", 3.33, "full", "architecture arms (1 seed)"),
-    ("P1b width64 vs CE, full NDCG@10", 2.57, "full", "architecture arms (1 seed)"),
-    ("P1b heads2 vs CE, full HR@10", -0.16, "full", "architecture arms (1 seed)"),
-    ("P1b heads2 vs CE, full NDCG@10", 0.69, "full", "architecture arms (1 seed)"),
-    # Seeded, 3 per arm, tested against the CE control's own measured spread
-    # rather than the blanket floor. Reported by --arm-seeds.
-    ("P1b width64 vs CE, full HR@10 (3 seeds)", 2.72, "full", "seeded, p=0.034"),
-    ("P1b width64 vs CE, full NDCG@10 (3 seeds)", 2.74, "full", "seeded, p=0.006"),
-    ("P1b batch19 vs CE, full HR@10 (3 seeds)", 0.36, "full", "seeded, p=0.474 (null)"),
-    ("P1b batch19 vs CE, full NDCG@10 (3 seeds)", 0.02, "full", "seeded, p=0.975 (null)"),
-    ("P1b heads2 vs CE, full HR@10 (3 seeds)", 1.11, "full", "seeded, p=0.285 (underpowered)"),
-    ("P1b heads2 vs CE, full NDCG@10 (3 seeds)", 0.99, "full", "seeded, p=0.304 (underpowered)"),
+    # Restated on 3-seed means once RecBole had seeds of its own: seed 42 turned out
+    # to be the lowest of the three on full HR@10, so the single-seed residual
+    # (+14.30% / +16.06%) understated it.
+    (
+        "Residual: RecBole vs CE, full HR@10 (3-seed means)",
+        15.87,
+        "full",
+        "loss ablation",
+        "recbole_d02",
+        "ce",
+    ),
+    (
+        "Residual: RecBole vs CE, full NDCG@10 (3-seed means)",
+        17.16,
+        "full",
+        "loss ablation",
+        "recbole_d02",
+        "ce",
+    ),
+    # The three architecture arms, each one field against the CE control. Judged
+    # against each arm's OWN spread: heads2's is seven times the control's, which is
+    # why three seeds cannot settle it.
+    (
+        "P1b width64 vs CE, full HR@10 (3 seeds)",
+        2.72,
+        "full",
+        "seeded, p=0.034",
+        "ce_width64",
+        "ce",
+    ),
+    (
+        "P1b width64 vs CE, full NDCG@10 (3 seeds)",
+        2.74,
+        "full",
+        "seeded, p=0.006",
+        "ce_width64",
+        "ce",
+    ),
+    (
+        "P1b batch19 vs CE, full HR@10 (3 seeds)",
+        0.36,
+        "full",
+        "seeded, p=0.474 (null)",
+        "ce_batch19",
+        "ce",
+    ),
+    (
+        "P1b batch19 vs CE, full NDCG@10 (3 seeds)",
+        0.02,
+        "full",
+        "seeded, p=0.975 (null)",
+        "ce_batch19",
+        "ce",
+    ),
+    (
+        "P1b heads2 vs CE, full HR@10 (3 seeds)",
+        1.11,
+        "full",
+        "seeded, p=0.285 (undecided)",
+        "ce_heads2",
+        "ce",
+    ),
+    (
+        "P1b heads2 vs CE, full NDCG@10 (3 seeds)",
+        0.99,
+        "full",
+        "seeded, p=0.304 (undecided)",
+        "ce_heads2",
+        "ce",
+    ),
     # Ablations, all measured against the 100-epoch baseline
     # (`ablation_ml1m_baseline_100ep`) so both sides share a budget. The table
     # originally compared them against the 200-epoch headline run, which inflated
     # every delta -- by +0.47% on sampled HR@10 but +5.36% on full HR@10, enough to
-    # flip two conclusions. See REPRODUCTION_LOG.md.
-    ("A1: sinusoidal vs learnable pos emb", -0.06, "sampled", "ablation table"),
-    ("A1: none vs learnable pos emb", -1.05, "sampled", "ablation table"),
-    ("A2: maxlen 100 vs 200", -1.15, "sampled", "ablation table"),
-    ("A2: maxlen 50 vs 200", -3.61, "sampled", "ablation table"),
-    ("A4: popularity vs uniform negatives", -7.51, "sampled", "ablation table"),
-    ("A1: sinusoidal vs learnable pos emb, full", -7.11, "full", "ablation table"),
-    ("A1: none vs learnable pos emb, full", -2.47, "full", "ablation table"),
-    ("A2: maxlen 100 vs 200, full", -0.13, "full", "ablation table"),
-    ("A2: maxlen 50 vs 200, full", -13.45, "full", "ablation table"),
-    ("A4: popularity vs uniform negatives, full", -20.35, "full", "ablation table"),
+    # flip two conclusions. See REPRODUCTION_LOG.md. Both sides are the BCE
+    # configuration, but at 100 epochs rather than the 200 the seeds were run at.
+    ("A1: sinusoidal vs learnable pos emb", -0.06, "sampled", "ablation table", "bce", "bce"),
+    ("A1: none vs learnable pos emb", -1.05, "sampled", "ablation table", "bce", "bce"),
+    ("A2: maxlen 100 vs 200", -1.15, "sampled", "ablation table", "bce", "bce"),
+    ("A2: maxlen 50 vs 200", -3.61, "sampled", "ablation table", "bce", "bce"),
+    ("A4: popularity vs uniform negatives", -7.51, "sampled", "ablation table", "bce", "bce"),
+    ("A1: sinusoidal vs learnable pos emb, full", -7.11, "full", "ablation table", "bce", "bce"),
+    ("A1: none vs learnable pos emb, full", -2.47, "full", "ablation table", "bce", "bce"),
+    ("A2: maxlen 100 vs 200, full", -0.13, "full", "ablation table", "bce", "bce"),
+    ("A2: maxlen 50 vs 200, full", -13.45, "full", "ablation table", "bce", "bce"),
+    ("A4: popularity vs uniform negatives, full", -20.35, "full", "ablation table", "bce", "bce"),
 ]
+
+# Configuration families that have seeds of their own. Anything not listed here has
+# no measured spread and is reported as borrowed rather than silently proxied.
+# uni100 families carry only the sampled pair -- RecBole never ranked the full catalog.
+SAMPLED_ONLY = METRICS[:2]
+FAMILIES = {
+    "bce": ("sasrec_ml1m", "this repo's SASRec, BCE, 200ep", METRICS),
+    "ce": ("ablation_ml1m_loss_ce", "this repo's SASRec, CE control", METRICS),
+    "ce_width64": ("ablation_ml1m_ce_width64", "CE + hidden_dim 64", METRICS),
+    "ce_batch19": ("ablation_ml1m_ce_batch19", "CE + batch_size 19", METRICS),
+    "ce_heads2": ("ablation_ml1m_ce_heads2", "CE + 2 heads", METRICS),
+    "recbole_d02": (
+        "sasrec_recbole_1x_dropout02_ourprotocol",
+        "RecBole SASRec dropout 0.2, rescored here",
+        METRICS,
+    ),
+    "recbole_d02_uni100": (
+        "sasrec_recbole_1x_dropout02",
+        "RecBole SASRec dropout 0.2, RecBole's own uni100",
+        SAMPLED_ONLY,
+    ),
+}
 
 # A claimed margin is a difference between two runs that were each measured once.
 # The standard deviation of that difference is sqrt(2) x the per-run standard
@@ -115,7 +237,18 @@ CLAIMED_MARGINS = [
 FLOOR_MULTIPLIER = 2 * np.sqrt(2)
 
 
-def collect(tracking_uri: str, prefix: str) -> dict[str, np.ndarray]:
+def collect(
+    tracking_uri: str, prefix: str, require: list[tuple[str, str]] | None = None
+) -> dict[str, np.ndarray]:
+    """Gather every seed of one configuration family: `<prefix>` plus `<prefix>_seed<N>`.
+
+    `require` names the metrics a run must carry to be counted, defaulting to all
+    four. RecBole's own uni100 runs log only the sampled pair (they were never
+    evaluated against the full catalog inside RecBole), so a family measured on
+    that protocol passes just those two -- without this they are silently dropped
+    and the dropout headline has no measured floor of its own.
+    """
+    require = require or METRICS
     mlflow.set_tracking_uri(tracking_uri)
     client = mlflow.tracking.MlflowClient()
     exp = client.get_experiment_by_name("sequential-rec")
@@ -125,19 +258,74 @@ def collect(tracking_uri: str, prefix: str) -> dict[str, np.ndarray]:
     wanted = {r.data.tags.get("mlflow.runName") for r in runs}
     names = sorted(n for n in wanted if n and (n == prefix or n.startswith(f"{prefix}_seed")))
 
-    out: dict[str, list] = {key: [] for _, key in METRICS}
+    out: dict[str, list] = {key: [] for _, key in require}
     used = []
     for name in names:
         match = [r for r in runs if r.data.tags.get("mlflow.runName") == name]
         if not match:
             continue
         run = max(match, key=lambda r: r.info.start_time)
-        if not all(key in run.data.metrics for _, key in METRICS):
+        if not all(key in run.data.metrics for _, key in require):
             continue
         used.append(name)
-        for _, key in METRICS:
+        for _, key in require:
             out[key].append(run.data.metrics[key])
     return {k: np.asarray(v) for k, v in out.items()}, used
+
+
+def family_spreads(tracking_uri: str) -> dict[str, tuple[int, dict[str, float]]]:
+    """Per-run relative standard deviation for every configuration family that has
+    seeds, keyed by family then protocol. This is what replaces the single blanket
+    floor: the spread is a property of the configuration, not of the repo."""
+    out: dict[str, tuple[int, dict[str, float]]] = {}
+    for key, (prefix, _desc, require) in FAMILIES.items():
+        vals, used = collect(tracking_uri, prefix, require=require)
+        if len(used) < 2:
+            continue
+        per: dict[str, float] = {}
+        for label, metric_key in require:
+            v = vals[metric_key]
+            if len(v) < 2:
+                continue
+            protocol = "full" if label.startswith("full") else "sampled"
+            per[protocol] = max(per.get(protocol, 0.0), v.std(ddof=1) / v.mean() * 100)
+        if per:
+            out[key] = (len(used), per)
+    return out
+
+
+def margin_floor(
+    spreads: dict[str, tuple[int, dict[str, float]]],
+    protocol: str,
+    side_a: str | None,
+    side_b: str | None,
+    fallback: float,
+) -> tuple[float, str]:
+    """Floor for one claimed margin: 2 * sqrt(sd_a^2 + sd_b^2) over the two
+    configurations being compared, in relative %.
+
+    A side with no seeds of its own contributes its partner's spread, and the row is
+    marked "borrowed" so the reader can see which verdicts still rest on a proxy
+    rather than a measurement. If neither side is measured on this protocol the
+    blanket floor is used and the row says so.
+    """
+    sds = []
+    borrowed = 0
+    for side in (side_a, side_b):
+        got = spreads.get(side) if side else None
+        sd = got[1].get(protocol) if got else None
+        if sd is None:
+            borrowed += 1
+            sds.append(None)
+        else:
+            sds.append(sd)
+    measured = [x for x in sds if x is not None]
+    if not measured:
+        return fallback, "; floor borrowed from the BCE baseline"
+    filled = [x if x is not None else max(measured) for x in sds]
+    floor = 2 * float(np.sqrt(filled[0] ** 2 + filled[1] ** 2))
+    note = "" if borrowed == 0 else f"; {borrowed} side(s) borrowed"
+    return floor, note
 
 
 def arm_seeds(tracking_uri: str, arm: str, control: str) -> None:
@@ -223,12 +411,32 @@ if __name__ == "__main__":
         )
 
     floors = {p: FLOOR_MULTIPLIER * s for p, s in worst.items()}
-    print("\nNoise floors (2*sqrt(2) x worst per-run relative std, per protocol):")
+    print("\nBlanket floors from THIS family (2*sqrt(2) x worst per-run relative std):")
     for protocol, floor in floors.items():
         print(f"  {protocol:<8} {floor:.2f}%")
+
+    print("\nMeasured spread per configuration family (worst per-run rel. std, per protocol):")
+    spreads = family_spreads(args.tracking_uri)
+    for key, (name, desc, _) in FAMILIES.items():
+        got = spreads.get(key)
+        if not got:
+            print(f"  {key:<20} (no seeds found under {name!r})")
+            continue
+        n, per = got
+        cells = "  ".join(f"{p}={v:.2f}%" for p, v in sorted(per.items()))
+        print(f"  {key:<20} {n} seeds  {cells:<28} {desc}")
+
+    # Each margin against the two configurations it actually compares. sd of a
+    # difference is sqrt(sd_a^2 + sd_b^2), which only collapses to sqrt(2)*sd when
+    # both sides have the same spread -- and the whole point of the table above is
+    # that they do not.
     print()
-    print(f"{'claimed margin':<52} {'size':>7} {'proto':>8}  verdict")
-    for label, margin, protocol, where in CLAIMED_MARGINS:
-        floor = floors[protocol]
+    header = f"{'claimed margin':<52} {'size':>7} {'proto':>8} {'floor':>7}  verdict"
+    print(header)
+    for label, margin, protocol, where, side_a, side_b in CLAIMED_MARGINS:
+        floor, note = margin_floor(spreads, protocol, side_a, side_b, floors[protocol])
         verdict = "above floor" if abs(margin) > floor else "INSIDE NOISE"
-        print(f"{label:<52} {margin:>6.2f}% {protocol:>8}  {verdict}  ({where})")
+        print(
+            f"{label:<52} {margin:>6.2f}% {protocol:>8} {floor:>6.2f}%  "
+            f"{verdict}  ({where}{note})"
+        )
