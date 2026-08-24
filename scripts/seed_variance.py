@@ -85,6 +85,10 @@ CLAIMED_MARGINS = [
     # rather than the blanket floor. Reported by --arm-seeds.
     ("P1b width64 vs CE, full HR@10 (3 seeds)", 2.72, "full", "seeded, p=0.034"),
     ("P1b width64 vs CE, full NDCG@10 (3 seeds)", 2.74, "full", "seeded, p=0.006"),
+    ("P1b batch19 vs CE, full HR@10 (3 seeds)", 0.36, "full", "seeded, p=0.474 (null)"),
+    ("P1b batch19 vs CE, full NDCG@10 (3 seeds)", 0.02, "full", "seeded, p=0.975 (null)"),
+    ("P1b heads2 vs CE, full HR@10 (3 seeds)", 1.11, "full", "seeded, p=0.285 (underpowered)"),
+    ("P1b heads2 vs CE, full NDCG@10 (3 seeds)", 0.99, "full", "seeded, p=0.304 (underpowered)"),
     # Ablations, all measured against the 100-epoch baseline
     # (`ablation_ml1m_baseline_100ep`) so both sides share a budget. The table
     # originally compared them against the 200-epoch headline run, which inflated
@@ -155,15 +159,28 @@ def arm_seeds(tracking_uri: str, arm: str, control: str) -> None:
         print("need >=2 seeds per arm")
         return
 
-    print(f"{'metric':<20}{'arm mean':>10}{'ctl mean':>10}{'arm rsd':>9}{'ctl rsd':>9}{'delta':>9}{'p':>9}")
+    header = (
+        f"{'metric':<20}{'arm mean':>10}{'ctl mean':>10}{'arm rsd':>9}{'ctl rsd':>9}"
+        f"{'delta':>9}{'95% CI':>18}{'p':>9}"
+    )
+    print(header)
     for label, key in METRICS:
         x, y = a[key], c[key]
         d = (x.mean() - y.mean()) / y.mean() * 100
         _, pv = stats.ttest_ind(x, y, equal_var=False)
+        # Welch CI on the same relative scale as `delta`, so the interval and the
+        # point estimate in the README tables come from one place.
+        se = np.sqrt(x.var(ddof=1) / len(x) + y.var(ddof=1) / len(y))
+        df = se**4 / (
+            (x.var(ddof=1) / len(x)) ** 2 / (len(x) - 1)
+            + (y.var(ddof=1) / len(y)) ** 2 / (len(y) - 1)
+        )
+        half = stats.t.ppf(0.975, df) * se / y.mean() * 100
+        ci = f"[{d - half:+.2f}%, {d + half:+.2f}%]"
         print(
             f"{label:<20}{x.mean():>10.4f}{y.mean():>10.4f}"
             f"{x.std(ddof=1) / x.mean() * 100:>8.2f}%{y.std(ddof=1) / y.mean() * 100:>8.2f}%"
-            f"{d:>8.2f}%{pv:>9.4f}"
+            f"{d:>8.2f}%{ci:>18}{pv:>9.4f}"
         )
 
 
