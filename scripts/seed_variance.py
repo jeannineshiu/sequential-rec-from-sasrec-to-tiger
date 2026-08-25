@@ -1,5 +1,6 @@
-"""Summarize seed-to-seed variance for this repo's SASRec on ML-1M, and use it as
-a noise floor for the margins reported elsewhere in the project.
+"""Summarize seed-to-seed variance for one configuration family -- `--prefix` picks
+it, defaulting to this repo's SASRec on ML-1M -- and use the measured spreads as
+noise floors for the margins reported elsewhere in the project.
 
 Why this exists
 ---------------
@@ -204,6 +205,42 @@ CLAIMED_MARGINS = [
     ("A2: maxlen 100 vs 200, full", -0.13, "full", "ablation table", "bce", "bce"),
     ("A2: maxlen 50 vs 200, full", -13.45, "full", "ablation table", "bce", "bce"),
     ("A4: popularity vs uniform negatives, full", -20.35, "full", "ablation table", "bce", "bce"),
+    # Amazon Beauty, atomic vs semantic IDs. The SASRec side is seeded (P5(b));
+    # GenRec has no seeds of its own, so every row here is half borrowed. Beauty is a
+    # different dataset from every other family in this file, which is exactly why
+    # borrowing ML-1M's spread for it was the largest remaining proxy in the repo.
+    (
+        "Beauty: GenRec vs SASRec, sampled HR@10",
+        -28.96,
+        "sampled",
+        "atomic-vs-semantic table",
+        "beauty_sasrec",
+        None,
+    ),
+    (
+        "Beauty: GenRec vs SASRec, sampled NDCG@10",
+        -35.27,
+        "sampled",
+        "atomic-vs-semantic table",
+        "beauty_sasrec",
+        None,
+    ),
+    (
+        "Beauty: GenRec vs SASRec, full HR@10",
+        -57.80,
+        "full",
+        "atomic-vs-semantic table",
+        "beauty_sasrec",
+        None,
+    ),
+    (
+        "Beauty: GenRec vs SASRec, full NDCG@10",
+        -56.60,
+        "full",
+        "atomic-vs-semantic table",
+        "beauty_sasrec",
+        None,
+    ),
 ]
 
 # Configuration families that have seeds of their own. Anything not listed here has
@@ -221,6 +258,7 @@ FAMILIES = {
         "RecBole SASRec dropout 0.2, rescored here",
         METRICS,
     ),
+    "beauty_sasrec": ("sasrec_beauty", "this repo's SASRec on Beauty, BCE", METRICS),
     "recbole_d02_uni100": (
         "sasrec_recbole_1x_dropout02",
         "RecBole SASRec dropout 0.2, RecBole's own uni100",

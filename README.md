@@ -364,7 +364,26 @@ exhaustively.
 | GenRec (semantic) | 0.3621 | 0.2235 | 0.0250 | 0.0131 | **113,472** |
 | relative | −28.96% | −35.27% | −57.8% | −56.6% | **13.7%** |
 
-Every margin is far outside the seed-noise floor.
+Every margin is far outside the seed-noise floor — and as of 2026-08-25 that floor is Beauty's own.
+The SASRec row was re-run at seeds 1 and 2 (200 epochs each, ~22 min on the laptop GPU), because
+until then every Beauty margin on this page was judged against a floor measured on ML-1M:
+
+| Beauty SASRec, 3 seeds | mean | rel. std | min | max | borrowed ML-1M proxy |
+|---|---|---|---|---|---|
+| sampled HR@10 | 0.5116 | 0.64% | 0.5097 | 0.5154 | 0.34% |
+| sampled NDCG@10 | 0.3466 | 0.78% | 0.3448 | 0.3497 | 0.34% |
+| full HR@10 | 0.0611 | 2.53% | 0.0594 | 0.0624 | 1.19% |
+| full NDCG@10 | 0.0314 | **3.73%** | 0.0303 | 0.0326 | 1.08% |
+
+**Beauty is the noisiest configuration measured in this repo**, and the borrowed floor was too narrow
+on every one of the four metrics — 2x on the sampled pair, 2.1x and 3.5x on full ranking. That is the
+same direction of error the RecBole seeds found (1.83% against a borrowed 1.19%) and the opposite of
+the CE family's, which is the third independent demonstration that a single noise floor cannot be
+right for every configuration. The margins survive it comfortably: against floors of 2.20% sampled
+and 10.55% full (the GenRec side still borrowed, since GenRec has no seeds), the four relatives clear
+by 13x, 16x, 5.5x and 5.4x. The sentence this table replaced was true; it is now measured rather than
+assumed.
+
 
 The parameter column is what makes this a trade rather than a loss. The comparison **cannot** be
 parameter-matched: equalizing would mean crippling SASRec's item table or inflating GenRec's hidden
@@ -548,8 +567,8 @@ was wrong in both directions.** Every configuration with three or more seeds now
 | RecBole SASRec, dropout 0.2, RecBole's own uni100 | 3 | 0.24% | — |
 
 Per-run relative standard deviation, worst metric per protocol. Read the full-ranking column: it
-spans **0.58% to 1.83%**, a factor of three across configurations that differ by one field or one
-framework. Borrowing the BCE baseline's 1.19% overstates the CE family's noise by 2× — which is how
+spans **0.58% to 3.73%**, a factor of six across configurations that differ by one field, one
+framework, or one dataset (Beauty is the top of that range). Borrowing the BCE baseline's 1.19% overstates the CE family's noise by 2× — which is how
 `width64`'s real effect spent a day misfiled as noise — and *understates* RecBole's by 1.5×, which
 would wave through a full-ranking margin RecBole's own seeds cannot support. Both directions of
 error, from one borrowed number. There is no corrected constant, only per-configuration spreads.
@@ -651,6 +670,10 @@ uv run python -m scripts.diagnose_genrec             # diversity + per-level acc
 uv run python -m scripts.debias_decoding             # popularity-debiasing α sweep
 uv run python -m scripts.first_code_ceiling          # oracle-prefix ladder + level-1 localization
 uv run python -m scripts.seed_variance               # noise floor + margin re-check
+uv run python -m scripts.seed_variance --prefix sasrec_beauty   # the same, for Beauty
+# Beauty's own seeds (~22 min each, run one at a time so they do not contend):
+# for s in 1 2; do uv run python -m src.train --config configs/sasrec_beauty.yaml \
+#     --seed $s --run-name sasrec_beauty_seed$s; done
 
 uv run python -m src.export_results   # rebuild results/tables/master.md + figures
 uv run pytest tests/
@@ -687,8 +710,8 @@ implied.
   directions: too wide for the CE family (hiding width64's real effect) and too narrow for RecBole's
   full-ranking numbers (1.83% per run against the borrowed 1.19%). Seven configurations now carry
   their own measured spread and every margin is judged against the two it actually compares. What is
-  still unmeasured: **all of Beauty**, RecBole's dropout-0.5 and BERT4Rec runs, and the ablation arms
-  at their own 100-epoch budget. Those rows print as `borrowed` in `seed_variance` rather than being
+  still unmeasured: Beauty's **GenRec**, RecBole's dropout-0.5 and BERT4Rec runs, and the ablation
+  arms at their own 100-epoch budget. Beauty's SASRec now has three seeds of its own. Those rows print as `borrowed` in `seed_variance` rather than being
   quietly proxied, but borrowed is what they remain.
 - **The loss ablation is matched-budget, not converged.** Both arms are still improving at epoch
   200. CE's advantage is measured where BCE has not finished training, which understates BCE — the
@@ -707,14 +730,18 @@ implied.
 - **RecBole's dropout-0.2 run now has three seeds; every other RecBole number is still one.** The
   dropout-0.2 SASRec was re-run at seeds 1 and 2, which is what put a measured floor under the
   headline margin it carries (+3.71% / +6.33% on uni100, against that configuration's own 0.67%
-  floor — 5.5× and 17× clear). It also revealed that RecBole's full-ranking spread is the widest
-  measured here. The dropout-0.5 SASRec, both BERT4Rec runs, and all of Beauty remain single-seed,
-  so any margin involving them is still judged against a borrowed floor.
+  floor — 5.5× and 17× clear). The dropout-0.5 SASRec, both BERT4Rec runs, and Beauty's GenRec remain
+  single-seed, so any margin involving them is still judged against a partly borrowed floor.
+  RecBole's full-ranking spread was the widest measured here until Beauty's SASRec was seeded
+  (3.73% on full NDCG@10 against RecBole's 1.83%).
 - **Ablations are a statement about 100-epoch training.** Deliberate compute saving; both sides of
   every delta share the budget, but the popularity-negatives result in particular may be a
   convergence-speed effect rather than a final ranking.
-- **Beauty SASRec sits 0.43pp above the accepted reproduction band** (0.5097 vs 0.4654–0.5054).
-  Reported as-is rather than tuned until it lands inside.
+- **Beauty SASRec sits above the accepted reproduction band on all three seeds** (0.4654–0.5054;
+  seeds give 0.5097 / 0.5098 / 0.5154, i.e. +0.43pp, +0.44pp and +1.00pp, mean +0.62pp). Reported
+  as-is rather than tuned until it lands inside. Seeding moved this the unflattering way: seed 42
+  was the *lowest* of the three, so the single-seed disclosure understated the overshoot — the same
+  thing the RecBole seeds did to the residual.
 - **The atomic-vs-semantic comparison is not parameter-matched** and cannot be, by construction.
 - **The serving demo's GenRec list is beam-ranked** and therefore more optimistic than every table
   on this page.
