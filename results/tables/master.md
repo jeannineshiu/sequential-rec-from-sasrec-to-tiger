@@ -4,8 +4,8 @@ Generated from MLflow (`sqlite:///mlflow.db`, experiment `sequential-rec`) via `
 
 | run                                           | dataset       |   maxlen | pos_emb_type   | neg_sampling   |   avg_epoch_time_sec |   epochs_trained |   sampled_HR@10 |   sampled_NDCG@10 |   full_HR@10 |   full_NDCG@10 |
 |:----------------------------------------------|:--------------|---------:|:---------------|:---------------|---------------------:|-----------------:|----------------:|------------------:|-------------:|---------------:|
-| LOCALSMOKE_dropout02                          | ml-1m         |          |                |                |             464.7843 |           1.0000 |          0.7192 |            0.4891 |     nan      |       nan      |
 | LOCALSMOKE_dropout02                          | ml-1m         |          |                |                |             500.6428 |           1.0000 |          0.7192 |            0.4891 |     nan      |       nan      |
+| LOCALSMOKE_dropout02                          | ml-1m         |          |                |                |             464.7843 |           1.0000 |          0.7192 |            0.4891 |     nan      |       nan      |
 | SMOKE_loss_ce                                 | ml-1m         |      200 |                |                |             nan      |         nan      |        nan      |          nan      |     nan      |       nan      |
 | ablation_ml1m_baseline_100ep                  | ml-1m         |      200 |                |                |               5.8544 |         100.0000 |          0.8152 |            0.5859 |       0.2349 |         0.1252 |
 | ablation_ml1m_ce_batch19                      | ml-1m         |      200 |                |                |              13.9646 |         116.0000 |          0.8166 |            0.6114 |       0.3023 |         0.1741 |
@@ -32,6 +32,8 @@ Generated from MLflow (`sqlite:///mlflow.db`, experiment `sequential-rec`) via `
 | popularity_ml1m                               | ml-1m         |          |                |                |             nan      |         nan      |          0.4363 |            0.2401 |       0.0369 |         0.0180 |
 | probe_delete_me                               |               |          |                |                |             nan      |         nan      |        nan      |          nan      |     nan      |       nan      |
 | sasrec_beauty                                 | amazon-beauty |       50 |                |                |             nan      |         nan      |          0.5097 |            0.3453 |       0.0594 |         0.0303 |
+| sasrec_beauty_seed1                           | amazon-beauty |       50 |                |                |               6.2763 |         200.0000 |          0.5098 |            0.3448 |       0.0614 |         0.0312 |
+| sasrec_beauty_seed2                           | amazon-beauty |       50 |                |                |               6.7627 |         200.0000 |          0.5154 |            0.3497 |       0.0624 |         0.0326 |
 | sasrec_ml1m                                   | ml-1m         |      200 |                |                |             nan      |         nan      |          0.8190 |            0.5948 |       0.2475 |         0.1322 |
 | sasrec_ml1m_seed1                             | ml-1m         |      200 |                |                |               6.8701 |         200.0000 |          0.8202 |            0.5932 |       0.2455 |         0.1291 |
 | sasrec_ml1m_seed2                             | ml-1m         |      200 |                |                |               6.8272 |         140.0000 |          0.8192 |            0.5899 |       0.2465 |         0.1313 |

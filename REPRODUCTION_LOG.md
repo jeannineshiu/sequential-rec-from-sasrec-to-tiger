@@ -1130,6 +1130,42 @@ and the experiment failed in that direction. Rewritten, with the old version kep
 and explicitly marked do-not-use.
 
 **Not done:** Railway deployment (optional, and already below RQ-VAE in the Appendix C cut
-order), and the training-budget curve, which remains the project's largest gap.
+order), and the training-budget curve. *(Updated 2026-08-25: the budget curve is no longer
+"the project's largest gap" — it was costed and then deliberately cut. See below.)*
+
+---
+
+## Post-Week-6 — the gap queue, worked and then closed
+
+Written against `notes/` gap assessment of 2026-08-21, which ranked what the project does not
+establish. Five items were run; the sixth was costed and cut. In order:
+
+- **P1, the loss ablation** (2026-08-21). Full-catalog CE vs BCE, one line changed: +22.54% full
+  HR@10, −0.38% sampled. The objective explains 56–60% of the cross-framework gap, and the sampled
+  protocol cannot see it.
+- **P2, the oracle-prefix ladder** (2026-08-21). Analysis on the existing checkpoint, no retraining.
+  It overturned a standing README claim: the first semantic code is expensive but not the binding
+  constraint.
+- **P1b, three architecture arms** (2026-08-24). Width is real (+2.72% full HR@10, p=0.034), batch
+  granularity is null, head count is unresolved and recorded as such. The methodological result
+  outranked all three arms: at one seed each, every delta sat inside the blanket noise floor,
+  including the real one.
+- **P5(a), seeding RecBole** (2026-08-24, ~$13 of Daytona GPU). The borrowed floor was too *narrow*
+  on full ranking (1.83% measured against 1.19% borrowed) — the opposite direction to P1b's finding,
+  from the same borrowed constant. The blanket floor was retired for per-configuration spreads.
+- **P5(b), seeding Beauty** (2026-08-25, ~45 min of laptop GPU). Beauty is the noisiest configuration
+  in the repo (3.73% relative std on full NDCG@10), the borrowed floor was too narrow on all four
+  metrics, and the atomic-vs-semantic margins clear their own floors by 5.4–16x. It also moved a
+  disclosure the unflattering way: the Beauty band overshoot is +0.62pp on three seeds, not the
+  +0.43pp of seed 42, which was again the lowest of the three.
+- **P3(b/c), the training-budget curve — cut** (2026-08-25). Costed from the existing runs' measured
+  epoch times: ~42 GPU-hours for a 4x point on the model pair, ~105 for the full trajectory, ~315 to
+  run it to this repo's own seeding standard. It would reproduce an existing study on someone else's
+  question and change no claim on the page, while the misreading risk it addressed had already been
+  closed for free in August. Full reasoning in `docs/bert4rec-controversy.md` §6.4. The launcher was
+  smoke-tested and the sandboxes deleted before training, for ~$1.
+
+The pattern worth keeping: every experiment that was funded corrected something this project had
+already said in print. The one that would not was the one that got cut.
 
 
