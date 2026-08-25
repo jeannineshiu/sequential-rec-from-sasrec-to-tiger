@@ -56,7 +56,10 @@ original paper evaluated with.
 generative model reaches 71% of SASRec's sampled HR@10 while running on **13.7% of the parameters**
 (12,101 item embeddings collapse into 782 token embeddings). It also retrieves items that are
 structurally unreachable for an atomic embedding table: on items never seen in training, 7.25%
-HR@10 against SASRec's 0.00% (Fisher exact, one-sided *p* = 0.0008).
+HR@10 against SASRec's 0.00% (Fisher exact, one-sided *p* = 0.0008) — **but only with popularity
+debiasing applied at ranking time**. As trained it is 1 hit in 138 (0.72%, *p* = 0.50), and the
+debiasing that buys those 10 hits costs 80% of overall accuracy. The reach is real and it is not
+free; the full ledger is in the cold-start section.
 
 **5. Swapping item representations silently swaps scoring rules — and that is where the damage
 is.** A generative model ranks by `P(item | history)`, which carries a popularity prior; a dot
@@ -418,8 +421,13 @@ come from a single scoring run over identical users.
 
 **Debiased, the claim survives in its narrowest form.** On never-seen items the generative model
 retrieves 7.25% HR@10 where SASRec retrieves 0.00% — 10 hits in 138 against none, Fisher exact
-one-sided *p* = 0.0008. On tail items it becomes statistically indistinguishable from SASRec
-(*p* = 0.059). Semantic IDs really do reach items an atomic table structurally cannot. The price is
+one-sided *p* = 0.0008 (two-sided 0.0016). Undebiased it is 1 hit in 138, *p* = 0.50: the reach
+claim rests on the debiased scoring rule, not on the model as trained. Every p-value here is
+printed by `scripts/compare_atomic_vs_semantic.py` and written into
+[`results/tables/atomic_vs_semantic.md`](results/tables/atomic_vs_semantic.md); until 2026-08-25
+they lived only in this prose. On tail items it does not separate from SASRec
+(66 hits against 85 in 4,594; two-sided *p* = 0.139, and 0.070 one-sided in SASRec's favour —
+correcting a *p* = 0.059 that stood here until 2026-08-25 and reproduced under no test). Semantic IDs really do reach items an atomic table structurally cannot. The price is
 more than half the overall accuracy, paid on the head where the traffic is.
 
 ### Mechanism: generation collapses onto a small set of code sequences

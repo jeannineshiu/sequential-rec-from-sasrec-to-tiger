@@ -16,6 +16,7 @@ from pathlib import Path
 
 import torch
 import yaml
+from scipy.stats import fisher_exact
 
 from src.eval.cold_start import (
     DEFAULT_BUCKETS,
@@ -34,6 +35,43 @@ from src.utils import load_processed
 
 ATOMIC = "SASRec (atomic)"
 SEMANTIC = "GenRec (semantic)"
+
+
+def significance_table(rows: list[dict], models: list[str], k: int) -> str:
+    """Fisher exact tests for every bucket against the atomic baseline.
+
+    Why this is here rather than in prose: the cold-start claim is the one place
+    where the project leans on a hypothesis test, and until 2026-08-25 both of its
+    p-values existed only as text in the README -- no script produced them, so
+    nothing checked them when the numbers around them changed. One of the two did
+    not reproduce. Every interval in the seed work comes from `seed_variance.py`;
+    this is the same rule applied to the one test that had escaped it.
+
+    The counts are recovered as HR x n_users, which is exact: HR@k in a bucket is
+    hits/users by construction. `p(>)` is one-sided for the semantic model doing
+    better -- the direction the cold-start hypothesis predicts -- and `p(2)` is
+    two-sided, reported alongside so a reader is not handed only the friendlier
+    of the two.
+    """
+    lines = [
+        f"| bucket | users | model | hits@{k} | baseline hits | p(>) | p(2) |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        n = row["n_users"]
+        base = round(row[ATOMIC][f"HR@{k}"] * n)
+        for model in models:
+            if model == ATOMIC:
+                continue
+            hits = round(row[model][f"HR@{k}"] * n)
+            table = [[hits, n - hits], [base, n - base]]
+            greater = fisher_exact(table, alternative="greater")[1]
+            two = fisher_exact(table, alternative="two-sided")[1]
+            lines.append(
+                f"| {row['bucket']} | {n} | {model} | {hits} | {base} | "
+                f"{greater:.4f} | {two:.4f} |"
+            )
+    return "\n".join(lines)
 
 
 def semantic_label(alpha: float) -> str:
@@ -157,6 +195,9 @@ def main(
 
     figure = plot_buckets(rows, models, Path("results/figures/cold_start_buckets.png"), k=k)
 
+    significance = significance_table(rows, models, k=k)
+    print("\nFisher exact vs the atomic baseline:\n" + significance)
+
     bucket_desc = ", ".join(
         f"{label}: {low}" + (f"–{high}" if high is not None else "+")
         for label, low, high in DEFAULT_BUCKETS
@@ -169,6 +210,10 @@ def main(
         "Both models rank exhaustively over the whole catalogue, so no beam approximation is\n"
         "involved on either side. `debiased a=1` subtracts the log training-frequency prior.\n\n"
         + table
+        + "\n\n## Significance vs the atomic baseline\n\n"
+        "Fisher exact on hits/misses per bucket. `p(>)` is one-sided for the semantic model\n"
+        "being better (the cold-start prediction); `p(2)` is two-sided.\n\n"
+        + significance
         + "\n\n![cold start buckets](../figures/cold_start_buckets.png)\n"
     )
     print(f"\nWrote {out}\nWrote {figure}")
