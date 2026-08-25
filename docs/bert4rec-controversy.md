@@ -1,7 +1,8 @@
 # The BERT4Rec Reproducibility Controversy — What This Repo's Data Does and Doesn't Show
 
-**Status: partial.** All models ran at one training-budget point (1x = 200 epochs) under a
-matched protocol; the 4x/10x points did not run. The headline finding is that **the answer
+**Status: partial, and closed at partial by decision.** All models ran at one training-budget
+point (1x = 200 epochs) under a matched protocol; the 4x/10x points did not run and, as of
+2026-08-25, will not — see §6.4 for the cost and the reasoning. The headline finding is that **the answer
 flips depending on which SASRec you compare against** — and, as of the fourth run, that the
 flip is *caused* by a single framework default rather than merely correlated with it. This
 document reports what the runs support and is explicit about which claims they cannot reach.
@@ -366,9 +367,11 @@ Remaining, in cost order, cheapest first:
    against it, every conclusion in §3 holds: the dropout effect is 4–6x the floor, and the
    residual SASRec-over-BERT4Rec margin (+0.31% / +0.45%) is inside it, confirming the tie as
    a measurement rather than a hedge. **The floor is borrowed, not measured, for the RecBole
-   runs** — different model, framework and loss. Repeating a RecBole config across seeds
-   (~14 GPU-hours) would replace the proxy with the real thing; it is no longer urgent, since
-   the margins that matter clear the borrowed floor by a wide margin.
+   runs** — different model, framework and loss. **Superseded on 2026-08-24**: RecBole's
+   dropout-0.2 config was re-run at seeds 1 and 2, so that family now carries its own measured
+   spread and the blanket floor quoted above has been retired (see the README's noise-floor
+   section). Its full-ranking spread is 1.83%, *wider* than the borrowed 1.19% — the proxy was
+   too narrow there. Beauty, seeded on 2026-08-25, is wider still at 3.73%.
 2. **A loss ablation: RecBole SASRec at dropout 0.2 with BCE + 1 sampled negative**
    (~4.7 GPU-hours). Tests §4's explanation for the 40–53% full-ranking divergence, which is
    currently the largest unexplained effect in the project and the one that most undermines
@@ -377,12 +380,37 @@ Remaining, in cost order, cheapest first:
    `bert4rec_recbole_1x` and `sasrec_recbole_1x` frozen-negative and full-ranking numbers, so
    the §3 comparison table can be repeated on the full-ranking protocol rather than resting
    on the sampled one.
-4. **One 4x point (800 epochs) per model** (~23 GPU-hours for BERT4Rec). Turns C2's single
-   point into an actual budget curve and produces `training_budget.png`, M4's signature
-   figure and the last of its acceptance criteria still outstanding. Worth noting that the
-   dropout-0.2 SASRec had *not* plateaued at 200 epochs (§3), so the curve is unlikely to be
-   flat. The full 10x point is likely not worth its ~58 GPU-hours unless 4x is still
-   climbing.
+4. ~~One 4x point (800 epochs) per model~~ — **not funded, decided 2026-08-25, and the
+   reasoning is part of the result.** The measured epoch times are 84.2 s (SASRec) and
+   104.1 s (BERT4Rec), so a 4x point for the pair is ~42 GPU-hours (~$95) and the full
+   2000-epoch trajectory — which yields 1x/4x/10x from one run via the milestone snapshots in
+   `src/recbole_run.py` — is ~105 GPU-hours (~$240). Neither figure is the real price. This
+   repo's own standard, established by the seed work in the README, is that a new
+   configuration is not reported against a borrowed noise floor; a budget trajectory is a new
+   configuration whose spread nobody has measured, so meeting that standard means three seeds
+   per model — ~315 GPU-hours, ~$700 — and running it at RecBole's defaults would measure
+   budget crossed with the very dropout default §3 shows is the dominant term, so an honest
+   version wants a matched-dropout pair as well.
+
+   What that buys is a reproduction of a study that already exists (Petrov & Macdonald 2022),
+   on someone else's question, and it would not change a single claim in this repo. Every
+   other experiment that was funded here overturned or corrected something the repo itself had
+   said. This one has no such lever, and the risk of leaving it undone — a reader thinking
+   the project adjudicated the controversy — was closed for free by the framing paragraph in
+   the README and by §4 and §5 of this document, which state outright that C2 rests on one
+   point and is *consistent with* rather than *evidence for* the claim.
+
+   The directional evidence that does exist is free and is already recorded: at dropout 0.2
+   the valid NDCG@10 was still climbing at epoch 189 while the default-dropout run had
+   plateaued (§3). **The configuration that had not finished training is the one that wins**,
+   which is a sharper sentence than a two-point curve at defaults would have produced.
+   `results/figures/training_budget.png` therefore does not exist by decision rather than by
+   omission, and M4 stays partially met on the record.
+
+   If it is ever funded, the sweep is already built and takes one command per model:
+   `uv run python scripts/daytona_week4.py --model SASRec --detached` (add `--budgets` to
+   pick the trajectory). A smoke run on 2026-08-25 confirmed the launcher still provisions
+   and starts; the sandboxes were deleted before training, for ~$1.
 
 ---
 

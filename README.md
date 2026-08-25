@@ -147,9 +147,10 @@ the BERT4Rec reproducibility literature describes. Claim-by-claim analysis:
 
 **What this does and does not settle.** The BERT4Rec reproducibility literature's central claim is
 about *training budget* — that BERT4Rec's reported wins need far more training than the original
-comparisons gave it. **This repo does not test that claim.** Only the 1× (200-epoch) point ran; 4×
-and 10× were cut on cost (~58 GPU-hours per model for the full trajectory), so there is no budget
-curve here and nothing on this page adjudicates the controversy on its own terms. What the table
+comparisons gave it. **This repo does not test that claim, and as of 2026-08-25 it has
+been decided that it will not.** Only the 1× (200-epoch) point ran; 4× and 10× were cut on cost, and
+the limitations section below carries the full costing and reasoning. There is no budget curve here
+and nothing on this page adjudicates the controversy on its own terms. What the table
 above establishes is something upstream of it: at a *fixed* budget, the SASRec–BERT4Rec comparison
 is decided by a hyperparameter default neither paper is about, and the winner flips three ways
 depending on which SASRec you pick. That makes the controversy's premise — that these two models
@@ -719,9 +720,17 @@ implied.
 - **The loss ablation is one seed, and CE ran at a learning rate tuned for BCE.** Both arms share
   seed 42 and lr 0.001. CE winning at a rate it was never tuned for makes the result a lower bound
   rather than an artifact, but no lr sweep or second seed was run.
-- **No training-budget curve.** Only the 1× (200-epoch) point exists; 4× and 10× were cut on cost
-  (~58 GPU-hours per model for the full trajectory). The scaling claim at the heart of the BERT4Rec
-  controversy is therefore untested here.
+- **No training-budget curve, and there deliberately will not be one.** Only the 1× (200-epoch)
+  point exists. Measured epoch times put a 4× point for the model pair at ~42 GPU-hours and the full
+  1×/4×/10× trajectory at ~105; running it to this repo's own seeding standard — three seeds of a
+  configuration whose spread has never been measured — is ~315 GPU-hours, and at RecBole's defaults
+  it would measure training budget crossed with the dropout default shown above to be the dominant
+  term. It was cut on 2026-08-25 because it would reproduce an existing study on someone else's
+  question and would not change a claim on this page. The scaling claim at the heart of the BERT4Rec
+  controversy is therefore untested here, and stays untested. The one piece of free evidence points
+  the interesting way: the dropout-0.2 SASRec was still improving at epoch 189 while the
+  default-dropout run had plateaued — the configuration that had not finished training is the one
+  that wins. Full reasoning in [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md) §6.4.
 - **BERT4Rec comparisons rest on the sampled protocol.** Only one RecBole run has full-ranking
   numbers, and for the one pair where both exist they disagree by 40–53%. Nothing here establishes
   that the SASRec-vs-BERT4Rec ordering survives full-catalog evaluation. The cross-framework
