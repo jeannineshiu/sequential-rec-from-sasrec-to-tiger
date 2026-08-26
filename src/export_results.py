@@ -5,6 +5,7 @@ sampled-vs-full-ranking scatter plot. Run after training jobs finish:
 """
 
 import argparse
+import re
 from pathlib import Path
 
 import matplotlib
@@ -33,6 +34,29 @@ def load_runs(experiment: str = "sequential-rec") -> pd.DataFrame:
     for _, row in dropped.iterrows():
         print(f"Skipping {row.get('tags.mlflow.runName', '?')}: status={row['status']}")
     return runs[runs["status"] == "FINISHED"].reset_index(drop=True)
+
+
+# Runs whose name marks them a smoke test or a throwaway probe. Deleting them
+# from the tracking DB does not hold: they had been deleted once, and the Daytona
+# merge (scripts/merge_daytona_results.py) imports whatever the remote box
+# recorded, restoring five of them on 2026-08-24 alongside four real runs.
+# Filtering on the naming convention survives that, and survives the next smoke
+# test -- which is the point, since master.md is what the README points a reader
+# at to verify its numbers.
+# Substring, not prefix: the debris in the DB includes LOCALSMOKE_dropout02,
+# where the marker sits mid-word. No real arm name contains either word.
+DEBRIS_NAME_RE = re.compile(r"smoke|probe", re.IGNORECASE)
+
+
+def drop_debris(runs: pd.DataFrame) -> pd.DataFrame:
+    """Drop smoke/probe runs by name, announcing each one."""
+    name_col = "tags.mlflow.runName"
+    if name_col not in runs.columns:
+        return runs
+    is_debris = runs[name_col].fillna("").str.contains(DEBRIS_NAME_RE)
+    for name in runs.loc[is_debris, name_col]:
+        print(f"Skipping {name}: smoke/probe run, not a result")
+    return runs[~is_debris].reset_index(drop=True)
 
 
 def _coalesce(runs: pd.DataFrame, candidates: list[str]) -> pd.Series | None:
@@ -73,7 +97,13 @@ def build_master_table(runs: pd.DataFrame, out_path: Path) -> None:
         if merged is not None:
             df[dst] = merged
 
-    df = df.sort_values("run")
+    # Two runs can share a name -- a rerun keeps the old one, and the Daytona
+    # merge imports by name. sort_values defaults to quicksort, which is not
+    # stable, so same-named rows could swap places between two regenerations with
+    # no new runs, making `git diff` on this table useless as a signal that
+    # results changed. start_time breaks the tie deterministically, oldest first.
+    df["_start_time"] = runs["start_time"] if "start_time" in runs.columns else 0
+    df = df.sort_values(["run", "_start_time"], kind="mergesort").drop(columns="_start_time")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         f.write("# Master results table\n\n")
@@ -127,6 +157,6 @@ if __name__ == "__main__":
     parser.add_argument("--figure-out", type=str, default="results/figures/sampled_vs_full.png")
     args = parser.parse_args()
 
-    runs = load_runs()
+    runs = drop_debris(load_runs())
     build_master_table(runs, Path(args.table_out))
     build_sampled_vs_full_scatter(runs, Path(args.figure_out))

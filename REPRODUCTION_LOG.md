@@ -1117,7 +1117,10 @@ to a file and poll the file, rather than through `tail`.
 
 ### Week 6 write-ups
 
-`docs/medium-draft.md`, `docs/linkedin-post.md`, `docs/interview-prep.md`. The Medium draft
+`docs/medium-draft.md`, `docs/linkedin-post.md`, `docs/interview-prep.md`. *(All three were
+removed from the repo in ed573be, which moved the career-facing drafts out; the paths in this
+section are what existed when the entry was written and no longer resolve. What they contained
+is described below and nowhere else in the repo.)* The Medium draft
 does not follow the structure in EXECUTION_PLAN (chronological walk through the six weeks);
 it is organised around the three times a control passed while the thing it was controlling
 for was breaking a conclusion — Week 3's epoch budget, Week 4's dropout default, Week 6's
