@@ -435,13 +435,21 @@ more than half the overall accuracy, paid on the head where the traffic is.
 | model | distinct items across all top-10s | median train freq | % head | % torso | % tail | % unseen |
 |---|---|---|---|---|---|---|
 | SASRec (atomic) | **9,221** (76% of catalog) | 22 | 54.2% | 42.1% | 3.7% | 0.0% |
-| GenRec (semantic) | **1,749** (14%) | 63 | 74.1% | 21.3% | 4.6% | 0.0% |
-| GenRec debiased α=1 | **1,976** (16%) | 5 | 7.0% | 44.8% | 36.6% | 11.6% |
+| GenRec (semantic) | **1,763** (15%) | 63 | 74.1% | 21.3% | 4.5% | 0.0% |
+| GenRec debiased α=1 | **2,100** (17%) | 5 | 8.1% | 50.3% | 39.8% | 1.8% |
+
+The debiased row is corrected as of 2026-08-27. It previously read 1,976 items and 11.6% unseen,
+both inflated by a padding token: `α > 0` computed `−inf − (−inf)` at index 0 and `torch.topk`
+sorts NaN above every real score, so the padding id led every debiased user's top-10 — one slot
+in ten, all of it landing in the unseen bucket. The ranked metrics above were never affected.
+The distinct-item counts are also reproducible only to about ±15 (0.8%): they are set statistics
+over 223,630 slots, and MPS float noise at the top-10 boundary moves them. Neither the size of
+the collapse nor any conclusion below turns on that margin.
 
 The debiased row pins the mechanism down, and it cuts against the tidy explanation. Debiasing
-changes *what* is recommended enormously — head share 74.1% → 7.0%, median recommended item from 63
-training appearances to 5, 11.6% of slots to never-seen items. Yet coverage moves only 1,749 →
-1,976: a 13% gain on a number that needs 5× to match SASRec.
+changes *what* is recommended enormously — head share 74.1% → 8.1%, torso 21.3% → 50.3%, tail
+4.5% → 39.8%, median recommended item from 63 training appearances to 5. Yet coverage moves only
+1,763 → 2,100: a 19% gain on a number that needs 5× to match SASRec.
 
 So the popularity prior is not the whole story. Removing it slides the model along a fixed frontier,
 trading head accuracy for tail accuracy — which is why overall HR@10 halves — without making it

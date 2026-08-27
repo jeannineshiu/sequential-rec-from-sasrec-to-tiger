@@ -200,6 +200,17 @@ class NaNScoreError(RuntimeError):
     """
 
 
+class StalledRunError(RuntimeError):
+    """A user batch took wildly longer than its neighbours.
+
+    On this laptop that means the machine suspended mid-run, and an MPS
+    evaluation that spans a suspend is not trustworthy. The standing rule was to
+    read the elapsed-time progress lines and check for a jump before believing a
+    number; that is a manual step, and it has now been skipped twice. This makes
+    it a check the run cannot get past.
+    """
+
+
 @torch.no_grad()
 def exhaustive_ranks(
     model: GenRec,
@@ -216,6 +227,7 @@ def exhaustive_ranks(
     topk: int = 10,
     on_nan: str = "raise",
     attn_budget: int = 100_000_000,
+    stall_factor: float = 10.0,
 ) -> tuple[list[int], dict[float, np.ndarray], dict[float, np.ndarray]]:
     """Score every catalogue item for every user.
 
@@ -239,6 +251,11 @@ def exhaustive_ranks(
     only when an earlier model has already fragmented its allocator. `cand_chunk`
     stays the ceiling; the budget lowers it when the histories are long. Beauty's
     196-token histories leave the chunk at 2048, so its tables do not move.
+
+    `stall_factor` raises `StalledRunError` when a user batch takes more than
+    that multiple of the median batch so far -- the signature of the machine
+    having slept in the middle of the run. Set it to 0 to score through a
+    suspend on purpose.
     """
     if on_nan not in ("raise", "miss"):
         raise ValueError(f"on_nan must be 'raise' or 'miss', got {on_nan!r}")
@@ -258,9 +275,11 @@ def exhaustive_ranks(
     # popularity profile of what gets recommended is read off these.
     recommended = {alpha: np.empty((len(users), topk), dtype=np.int64) for alpha in alphas}
     nan_users: list[int] = []
+    batch_seconds: list[float] = []
     start_time = time.time()
 
     for start in range(0, len(users), user_batch):
+        batch_start = time.time()
         chunk_users = users[start : start + user_batch]
         history = (
             torch.from_numpy(
@@ -332,6 +351,22 @@ def exhaustive_ranks(
             if nan_rows.any():  # on_nan == "miss"; rank n_items is past every k
                 ranks[alpha][start + offsets] = n_items
                 recommended[alpha][start + offsets] = 0
+
+        # A batch that suddenly takes an order of magnitude longer than its
+        # neighbours did not get slower, it got interrupted. Five samples before
+        # judging, and a median rather than a mean, so warm-up does not count.
+        batch_time = time.time() - batch_start
+        if stall_factor and len(batch_seconds) >= 5:
+            median = float(np.median(batch_seconds))
+            if batch_time > stall_factor * median:
+                raise StalledRunError(
+                    f"the batch at user {start} took {batch_time:.0f}s against a "
+                    f"{median:.0f}s median -- the machine almost certainly slept. "
+                    "Numbers from an MPS run that spans a suspend are not trustworthy; "
+                    "re-run under `caffeinate`, or pass stall_factor=0 to score through "
+                    "it on purpose."
+                )
+        batch_seconds.append(batch_time)
 
         done = start + len(chunk_users)
         if done % (user_batch * 20) == 0 or done == len(users):

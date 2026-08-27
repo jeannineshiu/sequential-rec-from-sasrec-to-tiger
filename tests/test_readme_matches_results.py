@@ -68,9 +68,9 @@ def cold_start():
 
 def test_readme_cold_start_table_matches_generated_json(cold_start):
     rows = readme_cold_start_rows()
-    assert set(rows) == set(
-        BUCKET_ALIASES
-    ), f"README buckets {sorted(rows)} do not match {sorted(BUCKET_ALIASES)}"
+    assert set(rows) == set(BUCKET_ALIASES), (
+        f"README buckets {sorted(rows)} do not match {sorted(BUCKET_ALIASES)}"
+    )
 
     mismatches = []
     for label, cells in rows.items():
@@ -104,3 +104,83 @@ def test_readme_unseen_hit_counts_match_generated_json(cold_start):
             f"README should quote '{phrase}' for the unseen bucket; the generated counts are "
             f"{debiased} debiased and {as_trained} as trained out of {n}"
         )
+
+
+# -- the recommendation-diversity table ----------------------------------
+#
+# Added 2026-08-27, after a padding token spent weeks inside these numbers: the
+# debiased row read 1,976 items and 11.6% unseen, and nothing compared it to the
+# artifact it was transcribed from. This table has no JSON companion, so the
+# markdown is the source of truth and is parsed directly.
+
+DIVERSITY_MD = ROOT / "results" / "tables" / "genrec_diagnosis.md"
+DIVERSITY_HEADER = (
+    "| model | distinct items across all top-10s | median train freq | "
+    "% head | % torso | % tail | % unseen |"
+)
+# README label -> the label the generating script writes.
+DIVERSITY_MODELS = {
+    "SASRec (atomic)": "SASRec (atomic)",
+    "GenRec (semantic)": "GenRec (semantic)",
+    "GenRec debiased α=1": "GenRec (semantic), debiased a=1",
+}
+# README column -> its index in the generated row, which carries an extra `mean`.
+DIVERSITY_COLUMNS = {"distinct": 0, "median": 1, "head": 3, "torso": 4, "tail": 5, "unseen": 6}
+
+
+def _diversity_cells(line: str) -> list[str]:
+    """Like `_cells`, but the model label keeps its comma.
+
+    `_cells` strips thousands separators, which also eats the one in
+    "GenRec (semantic), debiased a=1".
+    """
+    cells = [c.strip().replace("**", "") for c in line.strip().strip("|").split("|")]
+    return [cells[0]] + [c.replace(",", "") for c in cells[1:]]
+
+
+def _readme_diversity_rows() -> dict[str, list[str]]:
+    lines = README.read_text().splitlines()
+    if DIVERSITY_HEADER not in lines:
+        pytest.fail(
+            f"diversity table header not found in README.md. If the table was reformatted, "
+            f"update DIVERSITY_HEADER in {Path(__file__).name} -- do not delete the check."
+        )
+    rows = {}
+    for line in lines[lines.index(DIVERSITY_HEADER) + 2 :]:
+        if not line.startswith("|"):
+            break
+        cells = _diversity_cells(line)
+        # "9,221 (76% of catalog)" -> "9221": the share is prose, the count is the claim.
+        rows[cells[0]] = [c.split(" (")[0] for c in cells[1:]]
+    return rows
+
+
+def _generated_diversity_rows() -> dict[str, list[str]]:
+    rows = {}
+    for line in DIVERSITY_MD.read_text().splitlines():
+        if not line.startswith("| ") or line.startswith("| model") or "---" in line:
+            continue
+        cells = _diversity_cells(line)
+        if len(cells) == 8:  # model + 7 columns; the per-level table is narrower
+            rows[cells[0]] = cells[1:]
+    return rows
+
+
+def test_readme_diversity_table_matches_generated_table():
+    readme, generated = _readme_diversity_rows(), _generated_diversity_rows()
+    assert set(readme) == set(DIVERSITY_MODELS), (
+        f"README diversity rows {sorted(readme)} do not match {sorted(DIVERSITY_MODELS)}"
+    )
+
+    mismatches = []
+    for label, cells in readme.items():
+        source = generated[DIVERSITY_MODELS[label]]
+        for name, index in DIVERSITY_COLUMNS.items():
+            if cells[list(DIVERSITY_COLUMNS).index(name)] != source[index]:
+                mismatches.append(
+                    f"{label} / {name}: README "
+                    f"{cells[list(DIVERSITY_COLUMNS).index(name)]} != results {source[index]}"
+                )
+    assert not mismatches, "README disagrees with results/tables/genrec_diagnosis.md:\n  " + (
+        "\n  ".join(mismatches)
+    )

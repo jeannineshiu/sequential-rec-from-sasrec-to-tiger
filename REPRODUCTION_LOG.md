@@ -1382,6 +1382,59 @@ debiased user's top-10. Ranks were unaffected — the same NaN-loses-every-compa
 caused the headline bug happened to be harmless here — but the recommendation-diversity
 figures read off those top-k matrices were not.
 
+### What the padding-index NaN cost, measured
+
+The second NaN in the same function was smaller and had been in print longer. With `alpha > 0`
+the debiasing computed `-inf - (-inf)` at index 0, and `torch.topk` sorts NaN above every real
+score, so the padding id took first place in every debiased user's top-10 — one slot in ten,
+and `frequency[0] = 0` filed all of it under *unseen*. Regenerating the two Beauty tables that
+read those matrices:
+
+| GenRec, debiased a=1 | before | after |
+|---|---|---|
+| % unseen | **11.6%** | **1.8%** |
+| % torso | 44.8% | 50.3% |
+| % tail | 36.6% | 39.8% |
+| distinct items in top-10 | 1,976 | 2,100 |
+
+Ten of the 11.6 points were a padding token. The README's "11.6% of slots to never-seen items"
+was describing the bug. Coverage moved *up*, not down, because dropping index 0 frees a real
+tenth slot per user and those add more distinct items than the one removed.
+
+Nothing else moved: the ranked metrics in `debias_decoding.md` are unchanged at every alpha, and
+`atomic_vs_semantic.md` is byte-identical, because a NaN loses every comparison and so never
+affected a rank.
+
+### The coverage count is only reproducible to about +/-15
+
+`diagnose_genrec.py` and `debias_decoding.py` compute the same GenRec top-10 over the same
+Beauty users, and on 2026-08-27 they returned different distinct-item counts: 1,763 against
+1,749 at alpha 0, 2,100 against 2,084 at alpha 1. Each script reproduces its own number
+byte-exactly on a re-run. The difference between them is that `diagnose_genrec` scores SASRec on
+MPS first — the same allocation history that produces the NaN on ML-1M, here staying under the
+threshold and showing up as float noise at the top-10 boundary instead. `empty_cache()` does not
+equalise it, because the other model's live weights stay resident.
+
+So this statistic is deterministic given a fixed allocation history and carries ~0.8% spread
+across different ones. It is a set statistic over 223,630 slots, which is why it is far more
+sensitive than the HR/NDCG figures that agree to four decimals. The README now says so rather
+than printing four significant figures as if they were all load-bearing.
+
+### Two guards, because the manual rule failed again the same day
+
+The re-run of `diagnose_genrec` launched to produce those corrected tables spanned a system
+suspend — idle sleep at 16:25 on battery, display back at 17:07, and a progress line reading
+`3840/22363 users, 3012s elapsed` where its neighbours were 190s apart. That is the third time
+this rule has been applied by eye and the second time it was applied too late, so it is a check
+now: `exhaustive_ranks` times each user batch and raises `StalledRunError` when one exceeds 10x
+the median so far (five batches before it will judge, median not mean, so warm-up does not
+count). The gap that day was 14x. `stall_factor=0` opts out.
+
+The second guard is a test: `test_readme_diversity_table_matches_generated_table` parses the
+README's diversity table and asserts it against `genrec_diagnosis.md`. The cold-start table got
+this treatment on 2026-08-26 after a p-value drifted; the table one section below it did not, and
+that is where 11.6% sat unchallenged. Verified by breaking it — it names the cell.
+
 ### The rule
 
 A metric that moves in the flattering direction when the computation fails is the one to
@@ -1391,4 +1444,6 @@ its failure mode chosen on purpose, because the default is silent and generous.
 
 And: a number verified only by re-running it has not been verified. For anything that reaches
 a commit message, the second measurement has to differ from the first in something that could
-plausibly be the fault — a different device, a different chunking, a different evaluator.
+plausibly be the fault — a different device, a different chunking, a different evaluator. Two
+scripts that disagreed about the same quantity are what put a number on the coverage spread;
+neither one could have done it alone, however many times it ran.

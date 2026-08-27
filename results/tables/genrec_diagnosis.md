@@ -6,8 +6,8 @@ constraining what can appear in a top-10 on either side.
 | model | distinct items in all top-10s | median train freq | mean | % head | % torso | % tail | % unseen |
 |---|---|---|---|---|---|---|---|
 | SASRec (atomic) | 9,221 | 22 | 42.7 | 54.2% | 42.1% | 3.7% | 0.0% |
-| GenRec (semantic) | 1,749 | 63 | 97.3 | 74.1% | 21.3% | 4.6% | 0.0% |
-| GenRec (semantic), debiased a=1 | 1,976 | 5 | 8.9 | 7.0% | 44.8% | 36.6% | 11.6% |
+| GenRec (semantic) | 1,763 | 63 | 97.4 | 74.1% | 21.3% | 4.5% | 0.0% |
+| GenRec (semantic), debiased a=1 | 2,100 | 5 | 10.1 | 8.1% | 50.3% | 39.8% | 1.8% |
 
 Catalogue size: 12,101 items.
 

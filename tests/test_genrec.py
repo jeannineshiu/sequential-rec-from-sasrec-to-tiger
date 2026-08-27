@@ -1,12 +1,19 @@
 """Semantic-ID vocabulary, the generative model, and constrained decoding."""
 
+import time
+
 import numpy as np
 import pytest
 import torch
 
 from src.beam_search import beam_search, greedy_decode
 from src.data.genrec_dataset import GenRecTrainDataset, build_eval_input_tokens
-from src.eval.generative import NaNScoreError, exhaustive_ranks, log_prior
+from src.eval.generative import (
+    NaNScoreError,
+    StalledRunError,
+    exhaustive_ranks,
+    log_prior,
+)
 from src.eval.metrics import hit_rate_at_k
 from src.models.genrec import GenRec
 from src.semantic_ids.vocab import BOS, N_SPECIAL, PAD, SemanticIdVocab
@@ -403,3 +410,36 @@ def test_chunking_does_not_change_the_ranks(model, vocab):
     _, narrow, _ = exhaustive_ranks(model, vocab, train, targets, attn_budget=1, **kwargs)
     for alpha in (0.0, 1.0):
         np.testing.assert_array_equal(wide[alpha], narrow[alpha])
+
+
+def test_a_batch_that_stalls_stops_the_run(model, vocab):
+    """The suspend rule, as a check the run cannot get past."""
+    train = {u: [1, 2, 3] for u in range(1, 40)}
+    targets = {u: 1 + (u % 6) for u in train}
+    kwargs = {
+        "maxlen_items": 4,
+        "device": torch.device("cpu"),
+        "alphas": [0.0],
+        "prior": log_prior(np.ones(len(vocab.item_ids) + 1)),
+        "topk": 3,
+        "user_batch": 4,
+    }
+
+    inner = model.score_with_cache
+    calls = {"n": 0}
+
+    def score_with_cache(cache, item_tokens):
+        calls["n"] += 1
+        if calls["n"] == 8:  # well past the five batches the median needs
+            time.sleep(0.5)
+        return inner(cache, item_tokens)
+
+    model.score_with_cache = score_with_cache
+
+    with pytest.raises(StalledRunError, match="slept"):
+        exhaustive_ranks(model, vocab, train, targets, **kwargs)
+
+    # Same run, stall detection off: it completes.
+    calls["n"] = 0
+    users, ranks, _ = exhaustive_ranks(model, vocab, train, targets, stall_factor=0, **kwargs)
+    assert len(users) == len(train)
