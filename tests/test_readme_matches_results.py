@@ -68,9 +68,9 @@ def cold_start():
 
 def test_readme_cold_start_table_matches_generated_json(cold_start):
     rows = readme_cold_start_rows()
-    assert set(rows) == set(BUCKET_ALIASES), (
-        f"README buckets {sorted(rows)} do not match {sorted(BUCKET_ALIASES)}"
-    )
+    assert set(rows) == set(
+        BUCKET_ALIASES
+    ), f"README buckets {sorted(rows)} do not match {sorted(BUCKET_ALIASES)}"
 
     mismatches = []
     for label, cells in rows.items():
@@ -168,9 +168,9 @@ def _generated_diversity_rows() -> dict[str, list[str]]:
 
 def test_readme_diversity_table_matches_generated_table():
     readme, generated = _readme_diversity_rows(), _generated_diversity_rows()
-    assert set(readme) == set(DIVERSITY_MODELS), (
-        f"README diversity rows {sorted(readme)} do not match {sorted(DIVERSITY_MODELS)}"
-    )
+    assert set(readme) == set(
+        DIVERSITY_MODELS
+    ), f"README diversity rows {sorted(readme)} do not match {sorted(DIVERSITY_MODELS)}"
 
     mismatches = []
     for label, cells in readme.items():
@@ -224,9 +224,9 @@ def _readme_ml1m_rows() -> dict[str, list[str]]:
 def test_readme_ml1m_table_matches_generated_json():
     overall = json.loads(ML1M_JSON.read_text())["overall"]
     rows = _readme_ml1m_rows()
-    assert set(ML1M_ROWS) <= set(rows), (
-        f"README ML-1M table is missing rows: {sorted(set(ML1M_ROWS) - set(rows))}"
-    )
+    assert set(ML1M_ROWS) <= set(
+        rows
+    ), f"README ML-1M table is missing rows: {sorted(set(ML1M_ROWS) - set(rows))}"
 
     mismatches = []
     for label, key in ML1M_ROWS.items():
