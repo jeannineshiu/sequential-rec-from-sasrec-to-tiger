@@ -184,3 +184,66 @@ def test_readme_diversity_table_matches_generated_table():
     assert not mismatches, "README disagrees with results/tables/genrec_diagnosis.md:\n  " + (
         "\n  ".join(mismatches)
     )
+
+
+# -- the ML-1M atomic-vs-semantic table ----------------------------------
+#
+# Added 2026-08-27 with the table itself. Its full-ranking columns are the ones
+# the NaN bug got wrong, and they are hand-transcribed like every other table
+# here, so they get the same treatment as the cold-start figures.
+
+ML1M_JSON = ROOT / "results" / "tables" / "atomic_vs_semantic_ml-1m.json"
+ML1M_HEADING = "### The same comparison on ML-1M — the dense regime"
+ML1M_ROWS = {"SASRec (atomic)": "SASRec (atomic)", "GenRec (semantic)": "GenRec (semantic)"}
+# README column index (after the model label) -> metric in the JSON.
+ML1M_COLUMNS = {2: "HR@10", 3: "NDCG@10"}
+
+
+def _readme_ml1m_rows() -> dict[str, list[str]]:
+    """The table under the ML-1M heading. Its header is shared with Beauty's,
+    so the heading is what disambiguates them."""
+    lines = README.read_text().splitlines()
+    if ML1M_HEADING not in lines:
+        pytest.fail(
+            f"'{ML1M_HEADING}' not found in README.md. If the section was renamed, update "
+            f"ML1M_HEADING in {Path(__file__).name} -- do not delete the check."
+        )
+    rows, started = {}, False
+    for line in lines[lines.index(ML1M_HEADING) :]:
+        if line.startswith("|---"):
+            started = True
+            continue
+        if started:
+            if not line.startswith("|"):
+                break
+            cells = _cells(line)
+            rows[cells[0]] = cells[1:]
+    return rows
+
+
+def test_readme_ml1m_table_matches_generated_json():
+    overall = json.loads(ML1M_JSON.read_text())["overall"]
+    rows = _readme_ml1m_rows()
+    assert set(ML1M_ROWS) <= set(rows), (
+        f"README ML-1M table is missing rows: {sorted(set(ML1M_ROWS) - set(rows))}"
+    )
+
+    mismatches = []
+    for label, key in ML1M_ROWS.items():
+        for index, metric in ML1M_COLUMNS.items():
+            printed = float(rows[label][index])
+            actual = round(overall[key][metric], 4)
+            if printed != actual:
+                mismatches.append(f"{label} / full {metric}: README {printed} != results {actual}")
+
+    # The `relative` row is arithmetic on the two above it, so it is recomputed
+    # rather than trusted: that is the cell a corrected number is easiest to
+    # leave stale.
+    for index, metric in ML1M_COLUMNS.items():
+        base, other = overall["SASRec (atomic)"][metric], overall["GenRec (semantic)"][metric]
+        expected = f"{100 * (other - base) / base:.1f}%"
+        printed = rows["relative"][index].replace("−", "-")
+        if printed != expected:
+            mismatches.append(f"relative / full {metric}: README {printed} != computed {expected}")
+
+    assert not mismatches, "README disagrees with results/tables/:\n  " + "\n  ".join(mismatches)

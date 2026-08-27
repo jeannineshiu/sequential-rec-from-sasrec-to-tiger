@@ -59,7 +59,11 @@ structurally unreachable for an atomic embedding table: on items never seen in t
 HR@10 against SASRec's 0.00% (Fisher exact, one-sided *p* = 0.0008) — **but only with popularity
 debiasing applied at ranking time**. As trained it is 1 hit in 138 (0.72%, *p* = 0.50), and the
 debiasing that buys those 10 hits costs 80% of overall accuracy. The reach is real and it is not
-free; the full ledger is in the cold-start section.
+free; the full ledger is in the cold-start section. On
+[ML-1M](#the-same-comparison-on-ml-1m--the-dense-regime) the accuracy verdict repeats — −53.0%
+full HR@10 against Beauty's −57.8% — but the compression does not: **51.8%** of the parameters
+there, not 13.7%, because a 3,416-item table was never what cost anything. The saving scales with
+the catalog, not with the method.
 
 **5. Swapping item representations silently swaps scoring rules — and that is where the damage
 is.** A generative model ranks by `P(item | history)`, which carries a popularity prior; a dot
@@ -524,8 +528,51 @@ competitors simultaneously; the two cancel, and a flat curve reads as convergenc
 whether the beam finds the target, never whether its ranking is faithful.
 
 Superseded beam figures: −44.6% overall (vs −57.8% exhaustive), 839 distinct items / 84.7% head
-(vs 1,749 / 74.1%). The collapse is real either way, and about half as severe as the beam made it
+(vs 1,763 / 74.1%). The collapse is real either way, and about half as severe as the beam made it
 look.
+
+### The same comparison on ML-1M — the dense regime
+
+Beauty is the regime semantic IDs should suit: 12,101 items, sparse, 11.78% of them sharing a code
+prefix with a catalog neighbour. ML-1M is the opposite — 3,416 items, dense, 1.46% collisions, and
+98.9% of unconstrained greedy decodes already legal against Beauty's 81.8%. Running the identical
+comparison here is the check on whether Beauty's result belongs to semantic IDs or to Beauty.
+
+| | sampled HR@10 | sampled NDCG@10 | full HR@10 | full NDCG@10 | parameters |
+|---|---|---|---|---|---|
+| SASRec (atomic) | **0.8190** | **0.5948** | **0.2475** | **0.1322** | 212,000 |
+| GenRec (semantic) | 0.6260 | 0.3997 | 0.1164 | 0.0607 | **109,800** |
+| relative | −23.6% | −32.8% | −53.0% | −54.1% | **51.8%** |
+
+**The accuracy verdict repeats, and it does not depend on sparsity.** −53.0% full HR@10 here
+against −57.8% on Beauty: the generative model loses by roughly the same margin in the dense
+regime it was supposed to struggle in as in the sparse one it was supposed to suit. That margin is
+more than 40× ML-1M SASRec's own per-run spread on full HR@10 (1.19%, five seeds). GenRec has no
+seeds on either dataset, so the floor on that side is still borrowed — but no plausible
+generative-side spread closes a gap this size.
+
+**What does not carry over is the compression.** Beauty's headline is 13.7% of the parameters;
+here it is 51.8%, and the reason is worth stating precisely. The token table does shrink as
+advertised — 38,650 parameters against SASRec's 170,850, a 4.4× cut. But an item is four tokens,
+so the sequence the model attends over is four times longer, and the positional table grows from
+10,050 to 40,050 to cover it. That single term eats most of the saving and is over a third of the
+generative model's parameters. **Semantic IDs compress a catalog, not a model.** On 3,416 items
+there was not much catalog to compress, and the argument that carries the whole method on Beauty
+mostly evaporates.
+
+Both full-ranking columns score all 3,416 items for all 6,040 test users
+([`results/tables/atomic_vs_semantic_ml-1m.md`](results/tables/atomic_vs_semantic_ml-1m.md)). The
+`full_*` columns for `genrec_ml1m` in [`results/tables/master.md`](results/tables/master.md) are
+beam-ranked and read 0.1086 / 0.0579 — here beam *costs* 6.7% rather than the 32% it gained on
+Beauty, because at 1.46% collisions almost nothing can be credited by prefix and only the pruning
+is left. Both of these numbers were wrong until 2026-08-27: the exhaustive evaluator was scoring
+NaN as a rank-0 hit and reported 0.2682, an 8.4% *win*. The account is in
+[`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md).
+
+The cold-start buckets carry nothing on this dataset. After 5-core filtering ML-1M's test split has
+no unseen items and two tail users, so 5,990 of 6,040 targets are head. The bucketed table is
+generated for symmetry and reports what little there is; the cold-start claim rests on Beauty
+alone.
 
 ### Ablations — ML-1M, test, k=10, all rows at 100 epochs
 
@@ -678,6 +725,7 @@ uv run python -m scripts.inspect_semantic_ids --dataset ml-1m   # quality report
 
 # Generative model
 uv run python -m src.train_genrec --config configs/genrec_beauty.yaml
+uv run python -m src.train_genrec --config configs/genrec_ml1m.yaml    # ~3h20m on an M-series GPU
 
 # Analysis. Each of these scores all 12,101 items for all 22,363 test users:
 # budget ~55 min apiece on an M-series GPU. Add --beam to the first for the
@@ -691,6 +739,10 @@ uv run python -m scripts.seed_variance --prefix sasrec_beauty   # the same, for 
 # Beauty's own seeds (~22 min each, run one at a time so they do not contend):
 # for s in 1 2; do uv run python -m src.train --config configs/sasrec_beauty.yaml \
 #     --seed $s --run-name sasrec_beauty_seed$s; done
+
+# The same comparison on ML-1M (~8 min: 3,416 items x 6,040 test users)
+uv run python -m scripts.compare_atomic_vs_semantic \
+    --sasrec-config configs/sasrec_ml1m.yaml --genrec-config configs/genrec_ml1m.yaml
 
 uv run python -m src.export_results   # rebuild results/tables/master.md + figures
 uv run pytest tests/
@@ -727,8 +779,8 @@ implied.
   directions: too wide for the CE family (hiding width64's real effect) and too narrow for RecBole's
   full-ranking numbers (1.83% per run against the borrowed 1.19%). Seven configurations now carry
   their own measured spread and every margin is judged against the two it actually compares. What is
-  still unmeasured: Beauty's **GenRec**, RecBole's dropout-0.5 and BERT4Rec runs, and the ablation
-  arms at their own 100-epoch budget. Beauty's SASRec now has three seeds of its own. Those rows print as `borrowed` in `seed_variance` rather than being
+  still unmeasured: **GenRec on either dataset**, RecBole's dropout-0.5 and BERT4Rec runs, and the
+  ablation arms at their own 100-epoch budget. Beauty's SASRec now has three seeds of its own. Those rows print as `borrowed` in `seed_variance` rather than being
   quietly proxied, but borrowed is what they remain.
 - **The loss ablation is matched-budget, not converged.** Both arms are still improving at epoch
   200. CE's advantage is measured where BCE has not finished training, which understates BCE — the
@@ -768,6 +820,13 @@ implied.
   was the *lowest* of the three, so the single-seed disclosure understated the overshoot — the same
   thing the RecBole seeds did to the residual.
 - **The atomic-vs-semantic comparison is not parameter-matched** and cannot be, by construction.
+- **The compression claim is a Beauty result, not a method result.** 13.7% of the parameters on a
+  12,101-item catalog becomes 51.8% on ML-1M's 3,416, because the positional table grows with the
+  token sequence while the item table shrinks with the catalog. Two catalog sizes is not a curve;
+  where the trade turns favourable is unmeasured.
+- **ML-1M GenRec is one run at one seed**, trained to its 200-epoch budget rather than to
+  convergence (sampled NDCG@10 was still improving at the last epoch), and its margin is judged
+  against a floor whose generative side is borrowed.
 - **The serving demo's GenRec list is beam-ranked** and therefore more optimistic than every table
   on this page.
 
