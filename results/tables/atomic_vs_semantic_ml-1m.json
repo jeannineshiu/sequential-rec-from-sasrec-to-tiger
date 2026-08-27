@@ -1,0 +1,77 @@
+{
+  "unseen": {
+    "SASRec (atomic)": {
+      "HR@10": NaN,
+      "NDCG@10": NaN
+    },
+    "GenRec (semantic)": {
+      "HR@10": NaN,
+      "NDCG@10": NaN
+    },
+    "GenRec (semantic), debiased a=1": {
+      "HR@10": NaN,
+      "NDCG@10": NaN
+    },
+    "n_users": 0
+  },
+  "tail": {
+    "SASRec (atomic)": {
+      "HR@10": 0.0,
+      "NDCG@10": 0.0
+    },
+    "GenRec (semantic)": {
+      "HR@10": 0.5,
+      "NDCG@10": 0.5
+    },
+    "GenRec (semantic), debiased a=1": {
+      "HR@10": 0.5,
+      "NDCG@10": 0.5
+    },
+    "n_users": 2
+  },
+  "torso": {
+    "SASRec (atomic)": {
+      "HR@10": 0.0,
+      "NDCG@10": 0.0
+    },
+    "GenRec (semantic)": {
+      "HR@10": 0.16666666666666666,
+      "NDCG@10": 0.16666666666666666
+    },
+    "GenRec (semantic), debiased a=1": {
+      "HR@10": 0.20833333333333334,
+      "NDCG@10": 0.18167054459516407
+    },
+    "n_users": 48
+  },
+  "head": {
+    "SASRec (atomic)": {
+      "HR@10": 0.24958263772954925,
+      "NDCG@10": 0.13327985192580732
+    },
+    "GenRec (semantic)": {
+      "HR@10": 0.2689482470784641,
+      "NDCG@10": 0.2272293184513503
+    },
+    "GenRec (semantic), debiased a=1": {
+      "HR@10": 0.22437395659432388,
+      "NDCG@10": 0.20257186407136193
+    },
+    "n_users": 5990
+  },
+  "overall": {
+    "SASRec (atomic)": {
+      "HR@10": 0.24751655629139072,
+      "NDCG@10": 0.1321765418933089
+    },
+    "GenRec (semantic)": {
+      "HR@10": 0.2682119205298013,
+      "NDCG@10": 0.22683834727211732
+    },
+    "GenRec (semantic), debiased a=1": {
+      "HR@10": 0.22433774834437087,
+      "NDCG@10": 0.2025042470079513
+    },
+    "n_users": 6040
+  }
+}

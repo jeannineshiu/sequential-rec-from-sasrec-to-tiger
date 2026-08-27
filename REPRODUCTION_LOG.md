@@ -1171,4 +1171,97 @@ establish. Five items were run; the sixth was costed and cut. In order:
 The pattern worth keeping: every experiment that was funded corrected something this project had
 already said in print. The one that would not was the one that got cut.
 
+---
 
+## Post-Week-6 (cont.) — a number that changed because the laptop slept
+
+`configs/genrec_ml1m.yaml` and `data/processed/ml-1m/semantic_ids/` had been ready since
+2026-08-10, but only Beauty had a trained generative model, so the compression argument had
+never been tested in the regime where it should be weakest: ML-1M is 3,416 items against
+Beauty's 12,101, dense rather than sparse, 1.46% semantic ID collisions against 11.78%, and
+98.9% greedy decode legality against 81.8%. GenRec was trained there on 2026-08-26 (200
+epochs, 3h20m on MPS, sampled NDCG@10 still improving at the last epoch — the budget bound,
+not convergence, exactly as SASRec's four ML-1M seeds ran 140–200).
+
+The exhaustive atomic-vs-semantic pass was launched at 22:43 and read back the next morning:
+
+| bucket | SASRec | GenRec | vs atomic |
+|---|---|---|---|
+| overall | 0.2475 | **0.4079** | **+64.8%** |
+
+That is a conclusion reversal. On Beauty the semantic model loses by 57.8%; here it would win
+by two thirds, and beat every other model in the repo, RecBole SASRec's 0.3467–0.3581 included.
+
+It is wrong. Two clean re-runs give **0.2682, +8.4%** (Fisher one-sided p=0.0050), and their
+markdown tables are byte-identical to each other.
+
+### What actually happened
+
+The progress lines from the first run:
+
+```
+  5120/6040 users, 412s elapsed
+  6040/6040 users, 15756s elapsed
+```
+
+The machine slept for four hours between the second-to-last chunk and the last one. The two
+clean runs took 398s and 384s end to end.
+
+The tell is which number moved. SASRec is scored first and finished inside the opening ~50s,
+before the sleep; its 0.2475 is identical across all three runs, to four decimals. GenRec is
+scored second, and its loop is the one that spanned the sleep boundary. **Only the model whose
+computation crossed the suspend was wrong** — and it was wrong by +52% relative, not by a
+rounding margin. Residual MPS non-determinism between the two clean runs is ~1e-5 on NDCG@10
+with identical hit counts (1620), which is what real float noise on this box looks like; the
+contaminated run is three orders of magnitude outside it.
+
+### What caught it, and what would not have
+
+Nothing in the harness caught it. The run exited 0, wrote its table, and every internal
+consistency check passed — the two models were asserted to be scored on the same user ordering,
+the buckets summed correctly, and the Fisher tests ran on plausible counts.
+
+What caught it was a ratio that did not make sense. Ranking against the whole catalogue instead
+of 100 sampled negatives should cost a lot:
+
+| | sampled HR@10 (101 candidates) | full HR@10 (3,416) | drop |
+|---|---|---|---|
+| SASRec | 0.8190 | 0.2475 | 3.31x |
+| GenRec, contaminated | 0.6260 | 0.4079 | **1.53x** |
+| GenRec, clean | 0.6260 | 0.2682 | 2.33x |
+
+A model that gives up only a third of its hits when the candidate set grows 34x is not a
+finding, it is a defect. The clean 2.33x sits in the same family as SASRec's 3.31x.
+
+### The beam cross-check
+
+Run in the same pass on the same checkpoint, constrained beam search reproduces **0.1086**
+exactly — the number `train_genrec` had already written to MLflow. So the beam path is
+deterministic and the two evaluators are not disagreeing about the data; the gap is a property
+of beam search, and it points opposite ways on the two datasets:
+
+| | beam-20 | exhaustive | beam error |
+|---|---|---|---|
+| Beauty | 0.0329 | 0.0250 | **+32%** |
+| ML-1M | 0.1086 | 0.2682 | **-60%** |
+
+Beauty's overshoot was diagnosed in Week 6: at an 11.78% collision rate the beam credits hits
+by prefix. ML-1M has 1.46% collisions, so nothing inflates it, and only the pruning remains —
+beam 20 keeps 20 of 256 first-level codes, and a target whose first code is pruned is a miss
+however well the model scores it. The consequence for the results table: the `full_*` columns
+in `master.md` are beam-ranked for both generative runs, and are therefore wrong in a different
+direction on each dataset. The exhaustive tables are the ones to cite.
+
+### The rule
+
+An MPS evaluation that spans a system suspend is not trustworthy, and it fails silently — no
+error, no NaN, a plausible-looking table. Long GPU jobs on this laptop already run under
+`nohup` so the harness cannot kill them; that keeps the *process* alive across a lid close and
+does nothing for the *arithmetic*. Before using any number from a long MPS run, read the
+elapsed-time progress lines and check for a jump; if there is one, re-run before believing it.
+A headline result should not rest on a single pass regardless — two of these three runs cost
+under seven minutes each.
+
+This is the fourth time in this project that a control passed while the thing it was
+controlling for was breaking a conclusion, and the first time the cause was the hardware
+rather than the method.

@@ -1,0 +1,57 @@
+{
+  "unseen": {
+    "SASRec (atomic)": {
+      "HR@10": NaN,
+      "NDCG@10": NaN
+    },
+    "GenRec (semantic), beam 20": {
+      "HR@10": NaN,
+      "NDCG@10": NaN
+    },
+    "n_users": 0
+  },
+  "tail": {
+    "SASRec (atomic)": {
+      "HR@10": 0.0,
+      "NDCG@10": 0.0
+    },
+    "GenRec (semantic), beam 20": {
+      "HR@10": 0.0,
+      "NDCG@10": 0.0
+    },
+    "n_users": 2
+  },
+  "torso": {
+    "SASRec (atomic)": {
+      "HR@10": 0.0,
+      "NDCG@10": 0.0
+    },
+    "GenRec (semantic), beam 20": {
+      "HR@10": 0.0,
+      "NDCG@10": 0.0
+    },
+    "n_users": 48
+  },
+  "head": {
+    "SASRec (atomic)": {
+      "HR@10": 0.24958263772954925,
+      "NDCG@10": 0.13327985192580732
+    },
+    "GenRec (semantic), beam 20": {
+      "HR@10": 0.10951585976627713,
+      "NDCG@10": 0.05839104000999489
+    },
+    "n_users": 5990
+  },
+  "overall": {
+    "SASRec (atomic)": {
+      "HR@10": 0.24751655629139072,
+      "NDCG@10": 0.1321765418933089
+    },
+    "GenRec (semantic), beam 20": {
+      "HR@10": 0.10860927152317881,
+      "NDCG@10": 0.05790767047348831
+    },
+    "n_users": 6040
+  }
+}

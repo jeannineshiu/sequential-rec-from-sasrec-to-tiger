@@ -59,6 +59,12 @@ def significance_table(rows: list[dict], models: list[str], k: int) -> str:
     ]
     for row in rows:
         n = row["n_users"]
+        # An empty bucket has HR = nan, and there is no test to run on zero
+        # users. Beauty fills every bucket; ML-1M is dense enough that `unseen`
+        # is empty and `tail` holds two users, so this is reached the first time
+        # the comparison runs on any dataset that is not Beauty.
+        if not n:
+            continue
         base = round(row[ATOMIC][f"HR@{k}"] * n)
         for model in models:
             if model == ATOMIC:
@@ -111,6 +117,31 @@ def load_genrec(
     return model.eval()
 
 
+# Beauty was the only dataset this script ran on, so its outputs are unsuffixed
+# and the README links them by those paths. Keeping that name is back-compat, not
+# a default: every other dataset gets its own suffixed pair, so running ML-1M
+# cannot silently overwrite the Beauty table the headline comparison rests on.
+LEGACY_UNSUFFIXED_DATASET = "amazon-beauty"
+
+DATASET_LABELS = {"amazon-beauty": "Amazon Beauty", "ml-1m": "MovieLens-1M"}
+
+
+def output_stems(dataset: str, beam_size: int | None = None) -> tuple[str, str]:
+    """(table stem, figure stem) for a dataset and ranking mode.
+
+    Beam mode writes its own pair. It ranks a different way and produces numbers
+    that are not comparable to the exhaustive ones -- that is the whole reason it
+    is kept -- so letting it land on the exhaustive paths would overwrite the
+    headline table with a superseded methodology under an identical filename.
+    """
+    table, figure = "atomic_vs_semantic", "cold_start_buckets"
+    if dataset != LEGACY_UNSUFFIXED_DATASET:
+        table, figure = f"{table}_{dataset}", f"{figure}_{dataset}"
+    if beam_size is not None:
+        table, figure = f"{table}_beam{beam_size}", f"{figure}_beam{beam_size}"
+    return table, figure
+
+
 def main(
     sasrec_config: str, genrec_config: str, k: int, beam_size: int, alphas: list[float], beam: bool
 ) -> None:
@@ -119,6 +150,15 @@ def main(
         sasrec_cfg = yaml.safe_load(f)
     with open(genrec_config) as f:
         genrec_cfg = yaml.safe_load(f)
+
+    dataset = sasrec_cfg["dataset"]
+    if genrec_cfg["dataset"] != dataset:
+        raise SystemExit(
+            f"configs disagree on dataset: {dataset} vs {genrec_cfg['dataset']} -- "
+            "the two models must be scored on the same data"
+        )
+    table_stem, figure_stem = output_stems(dataset, beam_size if beam else None)
+    label = DATASET_LABELS.get(dataset, dataset)
 
     data_dir = Path(sasrec_cfg["data_dir"])
     train, valid, test, meta = load_processed(data_dir)
@@ -193,7 +233,7 @@ def main(
     table = format_table(rows, models, k=k)
     print("\n" + table)
 
-    figure = plot_buckets(rows, models, Path("results/figures/cold_start_buckets.png"), k=k)
+    figure = plot_buckets(rows, models, Path(f"results/figures/{figure_stem}.png"), k=k)
 
     significance = significance_table(rows, models, k=k)
     print("\nFisher exact vs the atomic baseline:\n" + significance)
@@ -202,19 +242,31 @@ def main(
         f"{label}: {low}" + (f"–{high}" if high is not None else "+")
         for label, low, high in DEFAULT_BUCKETS
     )
-    out = Path("results/tables/atomic_vs_semantic.md")
+    if beam:
+        ranking_note = (
+            f"SASRec ranks exhaustively; GenRec is ranked by constrained beam search "
+            f"(beam={beam_size}), so a target the beam drops counts as a miss no matter how\n"
+            "the model scores it. These numbers are a beam approximation and are not\n"
+            "comparable to the exhaustive table.\n"
+        )
+    else:
+        ranking_note = (
+            "Both models rank exhaustively over the whole catalogue, so no beam approximation is\n"
+            "involved on either side. `debiased a=1` subtracts the log training-frequency prior.\n"
+        )
+    out = Path(f"results/tables/{table_stem}.md")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
-        "# Atomic vs. semantic IDs — Amazon Beauty, full ranking, test set\n\n"
+        f"# Atomic vs. semantic IDs — {label}, full ranking, test set\n\n"
         f"Buckets by the target item's training-split frequency ({bucket_desc}).\n"
-        "Both models rank exhaustively over the whole catalogue, so no beam approximation is\n"
-        "involved on either side. `debiased a=1` subtracts the log training-frequency prior.\n\n"
+        + ranking_note
+        + "\n"
         + table
         + "\n\n## Significance vs the atomic baseline\n\n"
         "Fisher exact on hits/misses per bucket. `p(>)` is one-sided for the semantic model\n"
         "being better (the cold-start prediction); `p(2)` is two-sided.\n\n"
         + significance
-        + "\n\n![cold start buckets](../figures/cold_start_buckets.png)\n"
+        + f"\n\n![cold start buckets](../figures/{figure_stem}.png)\n"
     )
     print(f"\nWrote {out}\nWrote {figure}")
 
@@ -222,7 +274,7 @@ def main(
         row["bucket"]: {model: row[model] for model in models} | {"n_users": row["n_users"]}
         for row in rows
     }
-    Path("results/tables/atomic_vs_semantic.json").write_text(json.dumps(summary, indent=2))
+    Path(f"results/tables/{table_stem}.json").write_text(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":
