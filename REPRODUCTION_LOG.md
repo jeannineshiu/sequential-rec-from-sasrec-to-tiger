@@ -1175,6 +1175,14 @@ already said in print. The one that would not was the one that got cut.
 
 ## Post-Week-6 (cont.) — a number that changed because the laptop slept
 
+> **Superseded — see 2026-08-27.** Both of this section's ML-1M generative numbers are
+> wrong, the "clean" 0.2682 included. `exhaustive_ranks` was scoring a NaN as a rank-0 hit,
+> so every run of it — the overnight one, the two re-runs, and the two agreeing tables —
+> was reading the same defect at different severities. The corrected figure is **0.1164,
+> −53.0% against SASRec**. The suspend diagnosis below is a mis-attribution: the defect was
+> present in all three runs and the sentence "no error, no NaN" is false. Kept as written
+> because the correction is about what this reasoning missed.
+
 `configs/genrec_ml1m.yaml` and `data/processed/ml-1m/semantic_ids/` had been ready since
 2026-08-10, but only Beauty had a trained generative model, so the compression argument had
 never been tested in the regime where it should be weakest: ML-1M is 3,416 items against
@@ -1265,3 +1273,122 @@ under seven minutes each.
 This is the fourth time in this project that a control passed while the thing it was
 controlling for was breaking a conclusion, and the first time the cause was the hardware
 rather than the method.
+
+---
+
+## Post-Week-6 (cont.) — a correction: the exhaustive evaluator was scoring NaN as a hit
+
+**2026-08-27**
+
+### What was wrong
+
+The section above corrects an ML-1M number from 0.4079 to 0.2682 and calls the second one
+clean. It is not. `exhaustive_ranks` computed a user's rank as
+
+```python
+beaten = (adjusted > target_scores.unsqueeze(1)).sum(dim=1)
+```
+
+and every comparison against NaN is False. A user whose target score came back NaN was
+therefore beaten by nothing at all — **rank 0, a top-1 hit** — and the more badly the scorer
+failed, the better the metric looked. The corrected ML-1M result:
+
+| bucket | users | SASRec | GenRec | vs atomic |
+|---|---|---|---|---|
+| head | 5,990 | 0.2496 | 0.1174 | **−53.0%** |
+| overall | 6,040 | 0.2475 | **0.1164** | **−53.0%** |
+
+703 hits, not 1,620. Debiased α=1 lands at 0.0598 (−75.9%), not 0.2243. Semantic IDs do not
+win in the dense regime; they lose there by about as much as they lose on Beauty (−57.8%).
+The "modest win where the compression argument should be weakest" was an artifact of the
+evaluator, and so was every conclusion drawn from it.
+
+### Why "it reproduced" was worth nothing
+
+0.2682 was committed and pushed on the strength of two runs agreeing to the byte. They agree
+because the defect is deterministic. Scored in three separate fresh processes, the NaN lands
+on exactly the same 32 of the first 64 users (rows 32–63) every time. Re-running a
+deterministic computation tests the machine's repeatability, not the code's correctness. It is
+the same shape of mistake as the p-value that stood on the README for weeks: a number nothing
+had ever tried to falsify, only to restate.
+
+The check that would have worked was available and cheap: **the same users on a different
+device.** CPU and MPS agree on 511 of 512 ML-1M users exactly, the one disagreement being a
+rank off by one from ordinary float tie-breaking, with identical hit counts. Run against the
+broken code, that comparison fails immediately.
+
+### Where the NaN came from
+
+Not from the model or the data. It is an MPS fault, and it needs two things at once:
+
+- **A large transient.** The cached scorer materialises an attention tensor of
+  `[users, candidates, heads, L−1, T+L−1]`. On ML-1M's 796-token histories at the nominal
+  64 × 2048 that is 313M floats, 1.17 GiB. Halving the candidate chunk to 1024 — 157M — is
+  clean.
+- **An allocator already fragmented by another model.** Scoring GenRec immediately after
+  SASRec's full-ranking pass, exactly as `compare_atomic_vs_semantic` does, reproduces it
+  every time. Scoring GenRec alone in a fresh process, same shapes, does not. A single
+  `torch.mps.empty_cache()` between the two models also removes it.
+
+The failure is silent by construction: no exception, no warning, and the second half of the
+batch simply comes back NaN. Inserting `torch.mps.synchronize()` between chunks does not fix
+it but *does* move which rows are hit, which is why a four-hour suspend in the middle of the
+overnight run plausibly changed the number too. That part of the earlier diagnosis is not
+testable after the fact and is not claimed here — what is now established is that the defect
+was in all three runs, and the suspend at most changed its severity.
+
+**Beauty is untouched.** Its 196-token histories put the same transient at 38M elements,
+eight times under ML-1M's, so its chunk size is unchanged and its tables re-run byte-identical.
+Every Beauty figure on the README stands.
+
+### The beam number was the one to believe
+
+Constrained beam search reported 0.1086 for ML-1M. Against the corrected 0.1164 that is a
+**−6.7%** beam error, not the −60% the section above computes against a broken exhaustive
+baseline. `batched_beam_search` drops non-finite beams (`torch.isfinite`), so the same NaN
+that inflated the exhaustive path would have cost the beam a hit rather than credited one —
+the two paths were failing in opposite directions, and the safe one was called superseded.
+
+The sampled-to-full ratio, the heuristic that caught the overnight run, was still pointing at
+the answer and was read as satisfied one step too early:
+
+| | sampled HR@10 (101 candidates) | full HR@10 (3,416) | drop |
+|---|---|---|---|
+| SASRec | 0.8190 | 0.2475 | 3.31x |
+| GenRec, as reported 2026-08-26 | 0.6260 | 0.4079 | 1.53x |
+| GenRec, "clean" 2026-08-27 | 0.6260 | 0.2682 | 2.33x |
+| GenRec, corrected | 0.6260 | **0.1164** | **5.38x** |
+
+2.33x was accepted because it sat between SASRec's 3.31x and the obviously-broken 1.53x. It
+was a smaller dose of the same defect.
+
+### The fix
+
+`exhaustive_ranks` now refuses to turn a NaN into a number. Any NaN anywhere in a user's score
+row raises `NaNScoreError` naming the users — a whole row is condemned by one NaN, because a
+NaN *candidate* fails to beat the target too and so understates the rank of a user whose own
+score was fine. `on_nan="miss"` is available for a caller that would rather score those users
+as definite misses and be told how many; there is no option to restore the old behaviour.
+
+Two mitigations sit under the guard, neither of which the guard depends on: an `attn_budget`
+that caps the transient at 1e8 elements by narrowing the candidate chunk when histories are
+long (ML-1M drops to ~651 candidates per chunk, Beauty stays at 2048 and is unaffected), and
+an `empty_cache()` on entry so a previous model's freed blocks are not what the scorer builds
+on. With both in place the full 6,040-user pass completes without the guard firing, in 452s.
+
+Also fixed while in there: with `alpha > 0` the debiasing computed `−inf − (−inf)` at the
+padding index, and `torch.topk` sorts NaN above every real score, so the padding id led every
+debiased user's top-10. Ranks were unaffected — the same NaN-loses-every-comparison rule that
+caused the headline bug happened to be harmless here — but the recommendation-diversity
+figures read off those top-k matrices were not.
+
+### The rule
+
+A metric that moves in the flattering direction when the computation fails is the one to
+instrument first. The evaluator had no opinion about NaN, which meant it had an opinion: it
+treated an absent score as the best possible one. Any comparison-based rank computation needs
+its failure mode chosen on purpose, because the default is silent and generous.
+
+And: a number verified only by re-running it has not been verified. For anything that reaches
+a commit message, the second measurement has to differ from the first in something that could
+plausibly be the fault — a different device, a different chunking, a different evaluator.

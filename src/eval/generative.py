@@ -187,6 +187,19 @@ def log_prior(frequency: np.ndarray) -> np.ndarray:
     return np.log(counts / counts.sum(), out=np.full_like(counts, -np.inf), where=counts > 0)
 
 
+class NaNScoreError(RuntimeError):
+    """The model produced NaN scores for at least one user.
+
+    Its own type because the caller has to be able to tell this apart from an
+    ordinary crash. A NaN score is not a failure that announces itself: rank is
+    computed as `(others > target).sum()`, and every comparison against NaN is
+    False, so a NaN *target* score used to come back as rank 0 -- a top-1 hit
+    for exactly the users the model failed on. That is the one error direction
+    nothing downstream can catch, because it makes the metrics better rather
+    than worse.
+    """
+
+
 @torch.no_grad()
 def exhaustive_ranks(
     model: GenRec,
@@ -201,6 +214,8 @@ def exhaustive_ranks(
     user_batch: int = 64,
     cand_chunk: int = 2048,
     topk: int = 10,
+    on_nan: str = "raise",
+    attn_budget: int = 100_000_000,
 ) -> tuple[list[int], dict[float, np.ndarray], dict[float, np.ndarray]]:
     """Score every catalogue item for every user.
 
@@ -208,16 +223,41 @@ def exhaustive_ranks(
     top-k matrices are what any recommendation-diversity question has to be
     answered from: a beam-ranked top-k only contains items the beam kept, so
     it understates coverage by construction.
+
+    `on_nan` decides what happens when the model returns NaN for a user:
+    "raise" (the default) stops with a `NaNScoreError` naming the users, and
+    "miss" scores them as a definite miss and reports the count on the way out.
+    There is deliberately no option to keep the old behaviour, which was to let
+    the comparison arithmetic silently read a NaN as a rank-0 hit. Whatever
+    produces the NaN is a bug somewhere else; turning it into an inflated
+    metric is a bug here.
+
+    `attn_budget` caps the scorer's transient attention tensor, which is
+    [users, candidates, heads, L-1, T+L-1] elements -- 313M of them at the
+    nominal 64 x 2048 on ML-1M's 796-token histories. Past roughly 2e8 the MPS
+    backend returns NaN for part of the batch rather than failing, and does it
+    only when an earlier model has already fragmented its allocator. `cand_chunk`
+    stays the ceiling; the budget lowers it when the histories are long. Beauty's
+    196-token histories leave the chunk at 2048, so its tables do not move.
     """
+    if on_nan not in ("raise", "miss"):
+        raise ValueError(f"on_nan must be 'raise' or 'miss', got {on_nan!r}")
     users = list(targets.keys())
     n_items = len(vocab.item_ids)
     all_tokens = torch.from_numpy(vocab.item_tokens).long().to(device)  # [n_items+1, L]
     prior_t = torch.from_numpy(prior).float().to(device)
+    n_heads = model.attn_layers[0].num_heads
+    # The blocks a previous model left behind are what fragment the allocator
+    # into the state where the NaN appears -- scoring GenRec straight after
+    # SASRec reproduces it, scoring GenRec alone does not.
+    if device.type == "mps":
+        torch.mps.empty_cache()
 
     ranks = {alpha: np.empty(len(users), dtype=np.int64) for alpha in alphas}
     # The top-k items themselves, not just how many were distinct: the
     # popularity profile of what gets recommended is read off these.
     recommended = {alpha: np.empty((len(users), topk), dtype=np.int64) for alpha in alphas}
+    nan_users: list[int] = []
     start_time = time.time()
 
     for start in range(0, len(users), user_batch):
@@ -231,10 +271,17 @@ def exhaustive_ranks(
         )
         cache = model.build_cache(history)
 
+        # Candidates are scored independently, so narrowing the chunk changes
+        # only how the same work is dispatched -- never the numbers, except for
+        # the float noise any change of kernel shape carries.
+        span = cache["length"] + vocab.n_levels - 1
+        per_candidate = len(chunk_users) * n_heads * (vocab.n_levels - 1) * span
+        chunk = max(1, min(cand_chunk, attn_budget // max(1, per_candidate)))
+
         scores = torch.empty(len(chunk_users), n_items + 1, device=device)
         scores[:, 0] = -float("inf")
-        for c0 in range(1, n_items + 1, cand_chunk):
-            c1 = min(c0 + cand_chunk, n_items + 1)
+        for c0 in range(1, n_items + 1, chunk):
+            c1 = min(c0 + chunk, n_items + 1)
             candidates = all_tokens[c0:c1].unsqueeze(0).expand(len(chunk_users), -1, -1)
             scores[:, c0:c1] = model.score_with_cache(cache, candidates)
 
@@ -247,18 +294,55 @@ def exhaustive_ranks(
             if seen:
                 scores[row, torch.tensor(sorted(seen), device=device)] = -float("inf")
 
+        # Trap NaN before any of it reaches the ranking arithmetic. A whole row
+        # is condemned by a single NaN, not just a NaN in the target column: a
+        # NaN *candidate* never counts as beating the target either, so it
+        # understates the rank of a user whose own score was fine.
+        nan_rows = torch.isnan(scores).any(dim=1)
+        if nan_rows.any():
+            offsets = nan_rows.nonzero(as_tuple=True)[0].cpu().numpy()
+            bad = [chunk_users[int(o)] for o in offsets]
+            nan_users.extend(bad)
+            if on_nan == "raise":
+                raise NaNScoreError(
+                    f"{len(bad)} of {len(chunk_users)} users in the batch starting at "
+                    f"{start} scored NaN (first: user {bad[0]}, history "
+                    f"{len(train.get(bad[0], []))} items). Ranking these would report "
+                    "them as rank-0 hits. Fix the scorer, or pass on_nan='miss' to "
+                    "score them as misses on purpose."
+                )
+
         target_idx = torch.tensor([targets[u] for u in chunk_users], device=device)
         for alpha in alphas:
-            adjusted = scores - alpha * prior_t.unsqueeze(0) if alpha else scores
+            if alpha:
+                adjusted = scores - alpha * prior_t.unsqueeze(0)
+                # Index 0 is padding, not an item: its score is -inf and so is
+                # its prior, and -inf - (-inf) is NaN. `beaten` shrugs that off,
+                # but topk sorts NaN above every real score, so left alone the
+                # padding id leads every debiased user's top-k. Restore the
+                # sentinel rather than widen the NaN guard to accept it.
+                adjusted[:, 0] = -float("inf")
+            else:
+                adjusted = scores
             target_scores = adjusted[torch.arange(len(chunk_users), device=device), target_idx]
             beaten = (adjusted > target_scores.unsqueeze(1)).sum(dim=1)
             ranks[alpha][start : start + len(chunk_users)] = beaten.cpu().numpy()
             top = torch.topk(adjusted, k=topk, dim=1).indices.cpu().numpy()
             recommended[alpha][start : start + len(chunk_users)] = top
+            if nan_rows.any():  # on_nan == "miss"; rank n_items is past every k
+                ranks[alpha][start + offsets] = n_items
+                recommended[alpha][start + offsets] = 0
 
         done = start + len(chunk_users)
         if done % (user_batch * 20) == 0 or done == len(users):
             elapsed = time.time() - start_time
             print(f"  {done}/{len(users)} users, {elapsed:.0f}s elapsed", flush=True)
+
+    if nan_users:  # only reachable under on_nan="miss"
+        print(
+            f"  WARNING: {len(nan_users)}/{len(users)} users scored NaN and were "
+            f"counted as misses (first: {nan_users[:5]})",
+            flush=True,
+        )
 
     return users, ranks, recommended

@@ -6,6 +6,8 @@ import torch
 
 from src.beam_search import beam_search, greedy_decode
 from src.data.genrec_dataset import GenRecTrainDataset, build_eval_input_tokens
+from src.eval.generative import NaNScoreError, exhaustive_ranks, log_prior
+from src.eval.metrics import hit_rate_at_k
 from src.models.genrec import GenRec
 from src.semantic_ids.vocab import BOS, N_SPECIAL, PAD, SemanticIdVocab
 
@@ -308,3 +310,96 @@ def test_cached_scoring_handles_a_single_level():
         cached, model.score_item_tokens(history, all_items), atol=1e-5, rtol=1e-4
     )
     assert torch.exp(cached).sum().item() == pytest.approx(1.0, abs=1e-4)
+
+
+# -- exhaustive ranking: NaN must never become a hit ---------------------
+#
+# On 2026-08-27 the ML-1M exhaustive comparison reported GenRec at 0.2682
+# HR@10, an 8.4% win over SASRec. The scorer was returning NaN for a large
+# share of users, and `(others > target).sum()` counts nothing as beating a
+# NaN target -- so every failed user was recorded as a rank-0 hit. Two runs
+# agreed to the byte, because the defect is deterministic.
+
+
+def _nan_poisoning_model(model, poisoned: set[int]):
+    """Wrap `score_with_cache` so the given batch rows come back NaN."""
+    inner = model.score_with_cache
+
+    def score_with_cache(cache, item_tokens):
+        scores = inner(cache, item_tokens)
+        for row in poisoned:
+            if row < scores.shape[0]:
+                scores[row] = float("nan")
+        return scores
+
+    model.score_with_cache = score_with_cache
+    return model
+
+
+def _ranking_args(vocab, alphas=(0.0,), frequency=None):
+    """The three users, their targets, and the keyword arguments they rank under."""
+    train = {u: [1, 2, 3] for u in range(1, 4)}
+    targets = {1: 4, 2: 5, 3: 6}
+    if frequency is None:
+        frequency = np.ones(len(vocab.item_ids) + 1)
+    kwargs = {
+        "maxlen_items": 4,
+        "device": torch.device("cpu"),
+        "alphas": list(alphas),
+        "prior": log_prior(frequency),
+        "topk": 3,
+    }
+    return train, targets, kwargs
+
+
+def test_exhaustive_ranks_raises_on_nan_instead_of_scoring_a_hit(model, vocab):
+    train, targets, kwargs = _ranking_args(vocab)
+    _nan_poisoning_model(model, {1})
+
+    with pytest.raises(NaNScoreError) as excinfo:
+        exhaustive_ranks(model, vocab, train, targets, **kwargs)
+    assert "NaN" in str(excinfo.value)
+
+
+def test_exhaustive_ranks_can_score_nan_users_as_explicit_misses(model, vocab):
+    train, targets, kwargs = _ranking_args(vocab)
+    _nan_poisoning_model(model, {1})
+
+    _, ranks, recommended = exhaustive_ranks(model, vocab, train, targets, on_nan="miss", **kwargs)
+    # Row 1 is the poisoned user: ranked behind the whole catalogue rather
+    # than ahead of it, so it is a miss at every k the metrics can be asked for.
+    n_items = len(vocab.item_ids)
+    assert ranks[0.0][1] == n_items
+    assert hit_rate_at_k(ranks[0.0][1:2], k=n_items) == 0.0
+    assert (recommended[0.0][1] == 0).all()
+    # The clean rows are untouched by the guard.
+    assert (ranks[0.0][[0, 2]] < n_items).all()
+
+
+def test_exhaustive_ranks_rejects_an_unknown_on_nan_policy(model, vocab):
+    train, targets, kwargs = _ranking_args(vocab)
+    with pytest.raises(ValueError):
+        exhaustive_ranks(model, vocab, train, targets, on_nan="ignore", **kwargs)
+
+
+def test_debiased_topk_never_recommends_the_padding_id(model, vocab):
+    """alpha > 0 computes -inf - (-inf) = NaN at index 0, and topk ranks NaN first."""
+    frequency = np.arange(len(vocab.item_ids) + 1, dtype=np.float64)
+    train, targets, kwargs = _ranking_args(vocab, alphas=(0.0, 1.0), frequency=frequency)
+
+    _, ranks, recommended = exhaustive_ranks(model, vocab, train, targets, **kwargs)
+    assert (recommended[1.0] != 0).all(), "padding id was recommended"
+    assert (recommended[0.0] != 0).all()
+    for alpha in (0.0, 1.0):
+        assert (ranks[alpha] < len(vocab.item_ids)).all()
+
+
+def test_chunking_does_not_change_the_ranks(model, vocab):
+    """`attn_budget` narrows the candidate chunk on long histories; it must not
+    move a number while doing it."""
+    train, targets, kwargs = _ranking_args(vocab, alphas=(0.0, 1.0))
+
+    _, wide, _ = exhaustive_ranks(model, vocab, train, targets, cand_chunk=64, **kwargs)
+    _, narrow, _ = exhaustive_ranks(model, vocab, train, targets, attn_budget=1, **kwargs)
+    for alpha in (0.0, 1.0):
+        np.testing.assert_array_equal(wide[alpha], narrow[alpha])
