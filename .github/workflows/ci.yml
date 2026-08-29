@@ -17,10 +17,16 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      # Both pinned to a moving major tag, and both on node24: GitHub deprecated
+      # the node20 runtime that checkout@v4 and setup-uv@v5 target, and was
+      # already forcing them onto node24 with a warning on every run.
+      # setup-uv stops at v7 deliberately -- v8 dropped major and minor tags in
+      # favour of immutable full versions, which without a dependabot config here
+      # means a pin that never updates.
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
