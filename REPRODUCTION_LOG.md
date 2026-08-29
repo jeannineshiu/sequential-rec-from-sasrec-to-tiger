@@ -1447,3 +1447,133 @@ a commit message, the second measurement has to differ from the first in somethi
 plausibly be the fault — a different device, a different chunking, a different evaluator. Two
 scripts that disagreed about the same quantity are what put a number on the coverage spread;
 neither one could have done it alone, however many times it ran.
+
+
+## Post-Week-6 (cont.) — the generative side gets seeds, and three artifacts turn out to be stale
+
+*2026-08-28 / 29.* Every configuration in this repo had been re-run at seeds 1 and 2 except the one
+carrying the second deliverable. GenRec was reported from a single run at seed 42 on both datasets:
+the four atomic-vs-semantic margins, the cold-start result, the diversity collapse, the first-code
+ceiling. `seed_variance.py` printed those margins with one side `borrowed`, which was honest and had
+been the last such row for two weeks.
+
+Six runs, ~20 hours on the laptop: `genrec_beauty_seed{1,2}`, `genrec_ml1m_seed{1,2}`, and an
+exhaustive scoring pass over all three checkpoints per dataset.
+
+### The generative model is the noisiest thing here, on one protocol only
+
+| Beauty GenRec, 3 seeds | rel. std | Beauty SASRec | ML-1M GenRec |
+|---|---|---|---|
+| sampled HR@10 | 0.76% | 0.64% | 1.42% |
+| sampled NDCG@10 | 0.98% | 0.78% | 2.40% |
+| full HR@10, exhaustive | **13.57%** | 2.53% | 3.48% |
+| full NDCG@10, exhaustive | **11.28%** | 3.73% | 4.87% |
+
+Fourteen times the spread on the protocol that carries the argument, and the two protocols disagree
+about which run is best: `genrec_beauty_seed1` has the highest sampled HR@10 of the three and the
+lowest full HR@10 by 20%. Early stopping ran 62, 100 and 184 epochs for a sampled spread under 1%.
+
+This is the repo's own BERT4Rec chapter pointed at its own model. The 101-negative protocol does not
+merely compress differences between models; on the same three checkpoints of one model it reports a
+reproducibility that full ranking does not support.
+
+The floors that produces, against the borrowed ones they replace:
+
+| | borrowed | measured | margin | clears by |
+|---|---|---|---|---|
+| Beauty sampled | 2.20% | 2.49% | −28.95% / −35.27% | 11.6x / 14.2x |
+| Beauty full | 10.55% | **28.15%** | −57.7% / −56.6% | **2.05x / 2.01x** |
+| ML-1M sampled | 0.96% | 4.85% | −23.57% / −32.80% | 4.9x / 6.8x |
+| ML-1M full | 3.37% | 10.03% | −53.0% / −54.1% | 5.3x / 5.4x |
+
+The accuracy verdict survives everywhere. Beauty's full-ranking margin was previously stated as
+clearing by 5.5x; measuring the generative side halved that. The README had predicted this would
+hold — "no plausible generative-side spread closes a gap this size" — and it did, but the prediction
+was cheap to make and the measurement is what retires it.
+
+Note also that the two generative spreads differ by 3x between datasets, so GenRec's own noise is
+not portable either. Nothing about "the generative model is noisy" is a constant.
+
+### The cold-start p-value answers a question nobody asked
+
+Fisher exact on 10 hits in 138 tests whether *this* model's hit rate could come from user sampling.
+The question a reader has is whether a differently-seeded model produces 10 hits. Three seeds:
+
+| unseen bucket, 138 users | seed 42 | seed 1 | seed 2 |
+|---|---|---|---|
+| debiased a=1 hits | **10** | 7 | 8 |
+| one-sided *p* vs SASRec's 0 | 0.0008 | 0.0072 | 0.0035 |
+| as trained hits | 1 | 0 | 0 |
+
+The claim holds at every seed — SASRec retrieves nothing here under any of them — but the published
+figure is the top of the range, and the reach result is properly stated as 7–10 hits, *p* <= 0.0072.
+The undebiased "1 hit in 138" is 1 in the luckiest seed and 0 in the other two.
+
+The diversity collapse got an interval for free, since coverage is read off the same top-k matrices:
+1,749 / 2,329 / 1,330 distinct items across all top-10s, a 27.8% relative spread. "GenRec covers 14%
+of the catalogue against SASRec's 76%" survives comfortably; the specific 1,749 is one draw from
+11–19%.
+
+### Where the full-ranking floor comes from, and why not from MLflow
+
+`train_genrec` logs `test_full_*` from a beam-20 decode; every full-ranking margin on the page is
+exhaustive. On Beauty those differ by a third (0.0329 against 0.0251), because beam ranking flatters
+the generative model. A beam-based spread used as the floor for an exhaustive margin would print
+exactly like a real one, so the generative families take their sampled spread from MLflow and their
+full-ranking spread from `scripts/genrec_seed_spread.py`. A test asserts that split rather than
+leaving it to a comment.
+
+### Three artifacts no longer reproduced
+
+Scoring seed 42 again to sit alongside its two new siblings produced a number that disagreed with
+the published table: HR@10 0.025131 against 0.025041, three users out of 22,363. Chasing it:
+
+- `atomic_vs_semantic.{md,json}` — last written at 4cddaab. Regenerated: six README cells moved.
+- `genrec_diagnosis.md` — last written at 1639f78. Regenerated: 1,763 -> 1,749 distinct items.
+- `first_code_ceiling.md` — last written at 2cfbfe2. Regenerated: d=0 0.0250 -> 0.0251, and the
+  headline "handing over the first code multiplies HR@10 by 12.5x" is 12.4x.
+
+The README's numbers were faithful transcriptions of files that no longer regenerate. That is the
+mirror image of the failure this project has documented three times in other people's work and once
+in its own: there, prose drifted from the artifact; here, the artifact drifted from the code.
+
+Two things about the size of it. First, it is small — two or three users at the top-10 boundary,
+nothing that moves a conclusion, and the unseen bucket that carries the cold-start claim is
+unchanged at 1 / 10 / 0 hits. Second, it is exactly the magnitude this log already recorded on
+2026-08-27 under "the coverage count is only reproducible to about +/-15", attributed there to MPS
+allocation history. So the honest attribution is: not isolated. The scorer changed at `0e7097a`
+(`empty_cache`, attention-budget chunking) and the machine state changed too, and this measurement
+cannot separate them.
+
+What *is* isolated: two processes at HEAD — one scoring GenRec alone, one scoring SASRec first —
+returned bit-identical HR@10 at fifteen decimal places, and today's `diagnose_genrec` returned
+1,749, not the 1,763 the 2026-08-27 entry attributed to scoring SASRec first. That disagreement did
+not reproduce. Whatever produces the +/-15 is not a stable property of the model ordering.
+
+### The 0.059 that was corrected to 0.070
+
+The tail bucket's one-sided *p* stood at 0.059 in the README until 2026-08-25, when a566b74
+replaced it with 0.070 on the grounds that no script produced it and the stored counts said 66
+hits. The regenerated artifact says 65 hits, *p* = 0.0587. Both figures were faithful to the counts
+in front of whoever wrote them; the counts moved. The lesson is not that one of the two people was
+careless — it is that a bucket count sitting one user from a rank boundary was quoted to three
+decimal places by both of them.
+
+### What is still single-seed
+
+RecBole's dropout-0.5 run, both BERT4Rec runs, and the ablation arms at their own 100-epoch budget.
+Each still prints `borrowed`. Nothing in the second deliverable does any more.
+
+### The rule
+
+Measure the spread on the protocol the claim is made on. GenRec's sampled spread was available from
+MLflow for the asking and would have been reassuring, ordinary, and irrelevant: it describes a
+number the README does not use for this comparison. The floor has to be measured on the same
+statistic as the margin, or it is a proxy wearing a measurement's clothes.
+
+And: an artifact is not evidence of its own freshness. `results/` is regenerated by scripts, checked
+by CI, and linked from the README — and three of its files had quietly stopped being reproducible by
+the code in the same commit. The test that catches prose drifting from an artifact does not catch an
+artifact drifting from the code that claims to produce it. What would: regenerating them, which is
+cheap, and which nothing was asking anyone to do.
+

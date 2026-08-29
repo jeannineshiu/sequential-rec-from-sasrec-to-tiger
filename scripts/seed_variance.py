@@ -30,6 +30,9 @@ Usage
 """
 
 import argparse
+import json
+from pathlib import Path
+from typing import NamedTuple
 
 import mlflow
 import numpy as np
@@ -205,17 +208,18 @@ CLAIMED_MARGINS = [
     ("A2: maxlen 100 vs 200, full", -0.13, "full", "ablation table", "bce", "bce"),
     ("A2: maxlen 50 vs 200, full", -13.45, "full", "ablation table", "bce", "bce"),
     ("A4: popularity vs uniform negatives, full", -20.35, "full", "ablation table", "bce", "bce"),
-    # Amazon Beauty, atomic vs semantic IDs. The SASRec side is seeded (P5(b));
-    # GenRec has no seeds of its own, so every row here is half borrowed. Beauty is a
-    # different dataset from every other family in this file, which is exactly why
-    # borrowing ML-1M's spread for it was the largest remaining proxy in the repo.
+    # Amazon Beauty, atomic vs semantic IDs. Both sides are seeded as of 2026-08-28:
+    # the SASRec side by P5(b), the generative side by N2. Beauty is a different
+    # dataset from every other family in this file, which is why borrowing ML-1M's
+    # spread for it was the largest proxy in the repo until the SASRec side was run,
+    # and why the generative half was the last one left.
     (
         "Beauty: GenRec vs SASRec, sampled HR@10",
-        -28.96,
+        -28.95,
         "sampled",
         "atomic-vs-semantic table",
         "beauty_sasrec",
-        None,
+        "beauty_genrec",
     ),
     (
         "Beauty: GenRec vs SASRec, sampled NDCG@10",
@@ -223,23 +227,59 @@ CLAIMED_MARGINS = [
         "sampled",
         "atomic-vs-semantic table",
         "beauty_sasrec",
-        None,
+        "beauty_genrec",
     ),
     (
         "Beauty: GenRec vs SASRec, full HR@10",
-        -57.80,
+        -57.83,
         "full",
         "atomic-vs-semantic table",
         "beauty_sasrec",
-        None,
+        "beauty_genrec",
     ),
     (
         "Beauty: GenRec vs SASRec, full NDCG@10",
-        -56.60,
+        -56.63,
         "full",
         "atomic-vs-semantic table",
         "beauty_sasrec",
-        None,
+        "beauty_genrec",
+    ),
+    # ML-1M, the same comparison in the dense regime. The SASRec side is the
+    # five-seed BCE baseline; the generative side was seeded by N2 alongside
+    # Beauty's, so the second deliverable no longer has a borrowed side on
+    # either dataset.
+    (
+        "ML-1M: GenRec vs SASRec, sampled HR@10",
+        -23.57,
+        "sampled",
+        "atomic-vs-semantic table",
+        "bce",
+        "ml1m_genrec",
+    ),
+    (
+        "ML-1M: GenRec vs SASRec, sampled NDCG@10",
+        -32.80,
+        "sampled",
+        "atomic-vs-semantic table",
+        "bce",
+        "ml1m_genrec",
+    ),
+    (
+        "ML-1M: GenRec vs SASRec, full HR@10",
+        -52.98,
+        "full",
+        "atomic-vs-semantic table",
+        "bce",
+        "ml1m_genrec",
+    ),
+    (
+        "ML-1M: GenRec vs SASRec, full NDCG@10",
+        -54.11,
+        "full",
+        "atomic-vs-semantic table",
+        "bce",
+        "ml1m_genrec",
     ),
 ]
 
@@ -247,22 +287,58 @@ CLAIMED_MARGINS = [
 # no measured spread and is reported as borrowed rather than silently proxied.
 # uni100 families carry only the sampled pair -- RecBole never ranked the full catalog.
 SAMPLED_ONLY = METRICS[:2]
+
+
+class Family(NamedTuple):
+    """One configuration whose spread is measured rather than borrowed.
+
+    `metrics` names the metrics its MLflow runs are required to carry. `exhaustive`
+    points at a `results/tables/*.json` that measures the full-ranking spread
+    outside MLflow, for a family whose logged full-ranking metric is on a
+    different protocol from the margin it has to judge -- see the GenRec entries.
+    """
+
+    prefix: str
+    desc: str
+    metrics: list[tuple[str, str]] = METRICS
+    exhaustive: str | None = None
+
+
+# The generative families take their sampled spread from MLflow and their
+# full-ranking spread from `genrec_seed_spread`, and the split is not
+# bookkeeping. `train_genrec` logs `test_full_*` from a beam-20 decode, while
+# every full-ranking margin on the page comes from the exhaustive pass -- 0.0329
+# against 0.0250 on Beauty, because the beam flatters the model. Using the logged
+# spread as the floor for the exhaustive margin would be a proxy of exactly the
+# kind this file exists to remove. The sampled pair has no such problem: it is the
+# same `evaluate_sampled` for both models.
 FAMILIES = {
-    "bce": ("sasrec_ml1m", "this repo's SASRec, BCE, 200ep", METRICS),
-    "ce": ("ablation_ml1m_loss_ce", "this repo's SASRec, CE control", METRICS),
-    "ce_width64": ("ablation_ml1m_ce_width64", "CE + hidden_dim 64", METRICS),
-    "ce_batch19": ("ablation_ml1m_ce_batch19", "CE + batch_size 19", METRICS),
-    "ce_heads2": ("ablation_ml1m_ce_heads2", "CE + 2 heads", METRICS),
-    "recbole_d02": (
+    "bce": Family("sasrec_ml1m", "this repo's SASRec, BCE, 200ep"),
+    "ce": Family("ablation_ml1m_loss_ce", "this repo's SASRec, CE control"),
+    "ce_width64": Family("ablation_ml1m_ce_width64", "CE + hidden_dim 64"),
+    "ce_batch19": Family("ablation_ml1m_ce_batch19", "CE + batch_size 19"),
+    "ce_heads2": Family("ablation_ml1m_ce_heads2", "CE + 2 heads"),
+    "recbole_d02": Family(
         "sasrec_recbole_1x_dropout02_ourprotocol",
         "RecBole SASRec dropout 0.2, rescored here",
-        METRICS,
     ),
-    "beauty_sasrec": ("sasrec_beauty", "this repo's SASRec on Beauty, BCE", METRICS),
-    "recbole_d02_uni100": (
+    "beauty_sasrec": Family("sasrec_beauty", "this repo's SASRec on Beauty, BCE"),
+    "recbole_d02_uni100": Family(
         "sasrec_recbole_1x_dropout02",
         "RecBole SASRec dropout 0.2, RecBole's own uni100",
         SAMPLED_ONLY,
+    ),
+    "beauty_genrec": Family(
+        "genrec_beauty",
+        "this repo's GenRec on Beauty, semantic IDs",
+        SAMPLED_ONLY,
+        "results/tables/genrec_seed_spread_amazon-beauty.json",
+    ),
+    "ml1m_genrec": Family(
+        "genrec_ml1m",
+        "this repo's GenRec on ML-1M, semantic IDs",
+        SAMPLED_ONLY,
+        "results/tables/genrec_seed_spread_ml-1m.json",
     ),
 }
 
@@ -316,20 +392,41 @@ def family_spreads(tracking_uri: str) -> dict[str, tuple[int, dict[str, float]]]
     seeds, keyed by family then protocol. This is what replaces the single blanket
     floor: the spread is a property of the configuration, not of the repo."""
     out: dict[str, tuple[int, dict[str, float]]] = {}
-    for key, (prefix, _desc, require) in FAMILIES.items():
-        vals, used = collect(tracking_uri, prefix, require=require)
-        if len(used) < 2:
-            continue
+    for key, family in FAMILIES.items():
+        vals, used = collect(tracking_uri, family.prefix, require=family.metrics)
         per: dict[str, float] = {}
-        for label, metric_key in require:
-            v = vals[metric_key]
-            if len(v) < 2:
-                continue
-            protocol = "full" if label.startswith("full") else "sampled"
-            per[protocol] = max(per.get(protocol, 0.0), v.std(ddof=1) / v.mean() * 100)
+        if len(used) >= 2:
+            for label, metric_key in family.metrics:
+                v = vals[metric_key]
+                if len(v) < 2:
+                    continue
+                protocol = "full" if label.startswith("full") else "sampled"
+                per[protocol] = max(per.get(protocol, 0.0), v.std(ddof=1) / v.mean() * 100)
+        n_seeds = len(used)
+        if family.exhaustive:
+            measured = exhaustive_spread(family.exhaustive)
+            if measured:
+                n_exhaustive, rel_std = measured
+                per["full"] = rel_std
+                n_seeds = max(n_seeds, n_exhaustive)
         if per:
-            out[key] = (len(used), per)
+            out[key] = (n_seeds, per)
     return out
+
+
+def exhaustive_spread(path: str) -> tuple[int, float] | None:
+    """(seeds, worst relative std) on the full-ranking protocol, from a
+    `genrec_seed_spread` artifact. None when it has not been generated, which is
+    the honest state before the seeds have run -- the family then reports only
+    what MLflow measures and its full-ranking rows stay marked borrowed."""
+    file = Path(path)
+    if not file.exists():
+        return None
+    spread = json.loads(file.read_text())["spread"]["full"]
+    entries = [v for v in spread.values() if v["n"] >= 2]
+    if not entries:
+        return None
+    return min(v["n"] for v in entries), max(v["rel_std"] for v in entries)
 
 
 def margin_floor(
@@ -455,14 +552,14 @@ if __name__ == "__main__":
 
     print("\nMeasured spread per configuration family (worst per-run rel. std, per protocol):")
     spreads = family_spreads(args.tracking_uri)
-    for key, (name, desc, _) in FAMILIES.items():
+    for key, family in FAMILIES.items():
         got = spreads.get(key)
         if not got:
-            print(f"  {key:<20} (no seeds found under {name!r})")
+            print(f"  {key:<20} (no seeds found under {family.prefix!r})")
             continue
         n, per = got
         cells = "  ".join(f"{p}={v:.2f}%" for p, v in sorted(per.items()))
-        print(f"  {key:<20} {n} seeds  {cells:<28} {desc}")
+        print(f"  {key:<20} {n} seeds  {cells:<28} {family.desc}")
 
     # Each margin against the two configurations it actually compares. sd of a
     # difference is sqrt(sd_a^2 + sd_b^2), which only collapses to sqrt(2)*sd when

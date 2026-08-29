@@ -1,0 +1,473 @@
+{
+  "dataset": "amazon-beauty",
+  "k": 10,
+  "alphas": [
+    0.0,
+    1.0
+  ],
+  "runs": {
+    "genrec_beauty": {
+      "overall": {
+        "GenRec (semantic)": {
+          "HR@10": 0.025130796404775745,
+          "NDCG@10": 0.01314390740831882
+        },
+        "GenRec (semantic), debiased a=1": {
+          "HR@10": 0.011715780530340295,
+          "NDCG@10": 0.005313961362294141
+        }
+      },
+      "diversity": {
+        "GenRec (semantic)": {
+          "model": "GenRec (semantic)",
+          "distinct_items_recommended": 1749,
+          "median_train_freq": 63.0,
+          "mean_train_freq": 97.3495192952645,
+          "share_unseen": 0.00037562044448419263,
+          "share_tail": 0.04556186558154094,
+          "share_torso": 0.21280686848812772,
+          "share_head": 0.7412556454858471
+        },
+        "GenRec (semantic), debiased a=1": {
+          "model": "GenRec (semantic), debiased a=1",
+          "distinct_items_recommended": 2084,
+          "median_train_freq": 5.0,
+          "mean_train_freq": 10.123418146044806,
+          "share_unseen": 0.017900102848455036,
+          "share_tail": 0.39833653803157,
+          "share_torso": 0.502987076868041,
+          "share_head": 0.08077628225193399
+        }
+      },
+      "buckets": {
+        "unseen": {
+          "n_users": 138,
+          "GenRec (semantic)": {
+            "HR@10": 0.007246376811594203,
+            "NDCG@10": 0.0028032812118445045,
+            "hits": 1
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.07246376811594203,
+            "NDCG@10": 0.0331563336602791,
+            "hits": 10
+          }
+        },
+        "tail": {
+          "n_users": 4594,
+          "GenRec (semantic)": {
+            "HR@10": 0.00261210274270788,
+            "NDCG@10": 0.001140358540783484,
+            "hits": 12
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.014148889856334348,
+            "NDCG@10": 0.007393023243880136,
+            "hits": 65
+          }
+        },
+        "torso": {
+          "n_users": 9539,
+          "GenRec (semantic)": {
+            "HR@10": 0.005975469126742845,
+            "NDCG@10": 0.0024839236977139546,
+            "hits": 57
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.00796729216899046,
+            "NDCG@10": 0.003728227442198499,
+            "hits": 76
+          }
+        },
+        "head": {
+          "n_users": 8092,
+          "GenRec (semantic)": {
+            "HR@10": 0.060800790904597134,
+            "NDCG@10": 0.032701111378663675,
+            "hits": 492
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.013717251606524964,
+            "NDCG@10": 0.005528105974585828,
+            "hits": 111
+          }
+        },
+        "overall": {
+          "n_users": 22363,
+          "GenRec (semantic)": {
+            "HR@10": 0.025130796404775745,
+            "NDCG@10": 0.01314390740831882,
+            "hits": 562
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.011715780530340295,
+            "NDCG@10": 0.005313961362294141,
+            "hits": 262
+          }
+        }
+      },
+      "checkpoint": {
+        "path": "results/checkpoints/genrec_beauty.pt",
+        "size": 464091,
+        "mtime": 1786376981.7717307
+      }
+    },
+    "genrec_beauty_seed1": {
+      "overall": {
+        "GenRec (semantic)": {
+          "HR@10": 0.01994365693332737,
+          "NDCG@10": 0.010798210462998154
+        },
+        "GenRec (semantic), debiased a=1": {
+          "HR@10": 0.010418995662478201,
+          "NDCG@10": 0.004983804906072934
+        }
+      },
+      "diversity": {
+        "GenRec (semantic)": {
+          "model": "GenRec (semantic)",
+          "distinct_items_recommended": 2329,
+          "median_train_freq": 43.0,
+          "mean_train_freq": 84.16750883155211,
+          "share_unseen": 0.0005455439788937084,
+          "share_tail": 0.08666100254885302,
+          "share_torso": 0.2732415150024594,
+          "share_head": 0.6395519384697939
+        },
+        "GenRec (semantic), debiased a=1": {
+          "model": "GenRec (semantic), debiased a=1",
+          "distinct_items_recommended": 2462,
+          "median_train_freq": 5.0,
+          "mean_train_freq": 9.002012252381165,
+          "share_unseen": 0.012806868488127711,
+          "share_tail": 0.43131959039484863,
+          "share_torso": 0.47753432008227875,
+          "share_head": 0.07833922103474489
+        }
+      },
+      "buckets": {
+        "unseen": {
+          "n_users": 138,
+          "GenRec (semantic)": {
+            "HR@10": 0.0,
+            "NDCG@10": 0.0,
+            "hits": 0
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.050724637681159424,
+            "NDCG@10": 0.025740411795291213,
+            "hits": 7
+          }
+        },
+        "tail": {
+          "n_users": 4594,
+          "GenRec (semantic)": {
+            "HR@10": 0.0030474531998258597,
+            "NDCG@10": 0.0013189972615899053,
+            "hits": 14
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.015237265999129298,
+            "NDCG@10": 0.008889376279871082,
+            "hits": 70
+          }
+        },
+        "torso": {
+          "n_users": 9539,
+          "GenRec (semantic)": {
+            "HR@10": 0.004927141209770416,
+            "NDCG@10": 0.0022614488792136803,
+            "hits": 47
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.007443128210504245,
+            "NDCG@10": 0.00333799425117879,
+            "hits": 71
+          }
+        },
+        "head": {
+          "n_users": 8092,
+          "GenRec (semantic)": {
+            "HR@10": 0.04757785467128028,
+            "NDCG@10": 0.026427205425786502,
+            "hits": 385
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.01050420168067227,
+            "NDCG@10": 0.004352660713672344,
+            "hits": 85
+          }
+        },
+        "overall": {
+          "n_users": 22363,
+          "GenRec (semantic)": {
+            "HR@10": 0.01994365693332737,
+            "NDCG@10": 0.010798210462998154,
+            "hits": 446
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.010418995662478201,
+            "NDCG@10": 0.004983804906072934,
+            "hits": 233
+          }
+        }
+      },
+      "checkpoint": {
+        "path": "results/checkpoints/genrec_beauty_seed1.pt",
+        "size": 464295,
+        "mtime": 1787910331.2924128
+      }
+    },
+    "genrec_beauty_seed2": {
+      "overall": {
+        "GenRec (semantic)": {
+          "HR@10": 0.025801547198497518,
+          "NDCG@10": 0.013293622570071835
+        },
+        "GenRec (semantic), debiased a=1": {
+          "HR@10": 0.011089746456199973,
+          "NDCG@10": 0.0054214884400191595
+        }
+      },
+      "diversity": {
+        "GenRec (semantic)": {
+          "model": "GenRec (semantic)",
+          "distinct_items_recommended": 1330,
+          "median_train_freq": 73.0,
+          "mean_train_freq": 101.38521218083442,
+          "share_unseen": 4.47167195814515e-05,
+          "share_tail": 0.03338997451146984,
+          "share_torso": 0.14848633904216788,
+          "share_head": 0.8180789697267808
+        },
+        "GenRec (semantic), debiased a=1": {
+          "model": "GenRec (semantic), debiased a=1",
+          "distinct_items_recommended": 1605,
+          "median_train_freq": 5.0,
+          "mean_train_freq": 9.724039708446988,
+          "share_unseen": 0.01841434512364173,
+          "share_tail": 0.43133300541072306,
+          "share_torso": 0.45628940660913114,
+          "share_head": 0.09396324285650405
+        }
+      },
+      "buckets": {
+        "unseen": {
+          "n_users": 138,
+          "GenRec (semantic)": {
+            "HR@10": 0.0,
+            "NDCG@10": 0.0,
+            "hits": 0
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.057971014492753624,
+            "NDCG@10": 0.03743576822281498,
+            "hits": 8
+          }
+        },
+        "tail": {
+          "n_users": 4594,
+          "GenRec (semantic)": {
+            "HR@10": 0.00478885502829778,
+            "NDCG@10": 0.0018366758413693722,
+            "hits": 22
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.01784936874183718,
+            "NDCG@10": 0.00974315107978044,
+            "hits": 82
+          }
+        },
+        "torso": {
+          "n_users": 9539,
+          "GenRec (semantic)": {
+            "HR@10": 0.0053464723765593875,
+            "NDCG@10": 0.0024519055445957087,
+            "hits": 51
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.008386623335779431,
+            "NDCG@10": 0.0037728378050592005,
+            "hits": 80
+          }
+        },
+        "head": {
+          "n_users": 8092,
+          "GenRec (semantic)": {
+            "HR@10": 0.06228373702422145,
+            "NDCG@10": 0.03280509957110321,
+            "hits": 504
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.009639149777558082,
+            "NDCG@10": 0.004365481226696607,
+            "hits": 78
+          }
+        },
+        "overall": {
+          "n_users": 22363,
+          "GenRec (semantic)": {
+            "HR@10": 0.025801547198497518,
+            "NDCG@10": 0.013293622570071835,
+            "hits": 577
+          },
+          "GenRec (semantic), debiased a=1": {
+            "HR@10": 0.011089746456199973,
+            "NDCG@10": 0.0054214884400191595,
+            "hits": 248
+          }
+        }
+      },
+      "checkpoint": {
+        "path": "results/checkpoints/genrec_beauty_seed2.pt",
+        "size": 464295,
+        "mtime": 1787914695.4212344
+      }
+    }
+  },
+  "spread": {
+    "full": {
+      "HR@10": {
+        "mean": 0.02362533351220021,
+        "std": 0.003206015202768885,
+        "rel_std": 13.5702431506979,
+        "min": 0.01994365693332737,
+        "max": 0.025801547198497518,
+        "n": 3
+      },
+      "NDCG@10": {
+        "mean": 0.012411913480462937,
+        "std": 0.0013995112464163656,
+        "rel_std": 11.27554787276979,
+        "min": 0.010798210462998154,
+        "max": 0.013293622570071835,
+        "n": 3
+      }
+    },
+    "buckets": {
+      "unseen": {
+        "n_users": 138,
+        "GenRec (semantic)": {
+          "hits": [
+            1,
+            0,
+            0
+          ],
+          "min": 0,
+          "max": 1
+        },
+        "GenRec (semantic), debiased a=1": {
+          "hits": [
+            10,
+            7,
+            8
+          ],
+          "min": 7,
+          "max": 10
+        }
+      },
+      "tail": {
+        "n_users": 4594,
+        "GenRec (semantic)": {
+          "hits": [
+            12,
+            14,
+            22
+          ],
+          "min": 12,
+          "max": 22
+        },
+        "GenRec (semantic), debiased a=1": {
+          "hits": [
+            65,
+            70,
+            82
+          ],
+          "min": 65,
+          "max": 82
+        }
+      },
+      "torso": {
+        "n_users": 9539,
+        "GenRec (semantic)": {
+          "hits": [
+            57,
+            47,
+            51
+          ],
+          "min": 47,
+          "max": 57
+        },
+        "GenRec (semantic), debiased a=1": {
+          "hits": [
+            76,
+            71,
+            80
+          ],
+          "min": 71,
+          "max": 80
+        }
+      },
+      "head": {
+        "n_users": 8092,
+        "GenRec (semantic)": {
+          "hits": [
+            492,
+            385,
+            504
+          ],
+          "min": 385,
+          "max": 504
+        },
+        "GenRec (semantic), debiased a=1": {
+          "hits": [
+            111,
+            85,
+            78
+          ],
+          "min": 78,
+          "max": 111
+        }
+      }
+    },
+    "diversity": {
+      "GenRec (semantic)": {
+        "distinct_items_recommended": {
+          "mean": 1802.6666666666667,
+          "std": 501.6575857428385,
+          "rel_std": 27.8286382623616,
+          "min": 1330.0,
+          "max": 2329.0,
+          "n": 3
+        },
+        "share_unseen": {
+          "mean": 0.0003219603809864508,
+          "std": 0.00025468910013679995,
+          "rel_std": 79.10572703276748,
+          "min": 4.47167195814515e-05,
+          "max": 0.0005455439788937084,
+          "n": 3
+        }
+      },
+      "GenRec (semantic), debiased a=1": {
+        "distinct_items_recommended": {
+          "mean": 2050.3333333333335,
+          "std": 429.4907837583169,
+          "rel_std": 20.94736386400505,
+          "min": 1605.0,
+          "max": 2462.0,
+          "n": 3
+        },
+        "share_unseen": {
+          "mean": 0.01637377215340816,
+          "std": 0.003099711695858281,
+          "rel_std": 18.93095657382214,
+          "min": 0.012806868488127711,
+          "max": 0.01841434512364173,
+          "n": 3
+        }
+      }
+    }
+  },
+  "comparison_table": "atomic_vs_semantic"
+}
