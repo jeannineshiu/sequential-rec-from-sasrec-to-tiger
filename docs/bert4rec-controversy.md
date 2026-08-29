@@ -14,7 +14,7 @@ debugging trail.
 > RecBole SASRec's dropout from its default 0.5 to 0.2 moves it by +3.71% HR@10 / +6.33%
 > NDCG@10 — *more* than the entire margin (+3.39% / +5.86%) by which BERT4Rec was said to
 > beat it. With dropout matched, SASRec edges ahead of BERT4Rec on both metrics. The same
-> run meets M4's cross-validation criterion on HR@10 (+0.61%) but not NDCG@10 (+7.41%), and
+> run meets M4's cross-validation criterion on HR@10 (+0.61%) but not NDCG@10 (+7.40%), and
 > its full-ranking numbers — the first available for any RecBole run here — diverge from this
 > repo's SASRec far more than the sampled ones do. §3, §4, §5 and §6 are updated below.
 
@@ -100,7 +100,7 @@ only thing that changes between them is which SASRec is used as the baseline:
 | Comparison | HR@10 | NDCG@10 | Winner |
 |---|---|---|---|
 | RecBole BERT4Rec vs. RecBole SASRec (**dropout 0.5**) | +3.39% | +5.86% | **BERT4Rec, on both** |
-| RecBole BERT4Rec vs. **this repo's** SASRec | −1.94% | +1.48% | **a tie** (one metric each) |
+| RecBole BERT4Rec vs. **this repo's** SASRec | −1.95% | +1.47% | **a tie** (one metric each) |
 | RecBole BERT4Rec vs. RecBole SASRec (**dropout 0.2**) | −0.31% | −0.45% | **SASRec, on both** |
 
 Against RecBole's default-configured SASRec — same framework, same loss, same protocol, same
@@ -240,7 +240,7 @@ and measures the sampling, not the implementations:
 
 | RecBole SASRec (dropout 0.2) vs. this repo's SASRec | HR@10 | NDCG@10 |
 |---|---|---|
-| both on frozen `negatives.json` (**the valid comparison**) | **+0.61%** ✅ | **+7.41%** ❌ |
+| both on frozen `negatives.json` (**the valid comparison**) | **+0.61%** ✅ | **+7.40%** ❌ |
 | *mixed draws (RecBole uni100 vs. frozen) — do not use* | *−1.64%* | *+1.93%* |
 
 **M4's criterion is met on HR@10 and missed on NDCG@10.** The mixed-draw row is recorded
@@ -252,7 +252,7 @@ easy to make.
 The split verdict is more informative than either number alone. HR@10 only asks whether the
 true item landed in the top 10; NDCG@10 asks *where*. The two implementations put the true
 item in the top 10 at essentially the same rate (+0.61%), while RecBole's ranks it
-distinctly higher within that window (+7.41%). That is the same direction, and the same
+distinctly higher within that window (+7.40%). That is the same direction, and the same
 suspected cause, as the full-ranking divergence documented below: cross-entropy over the
 full catalog produces sharper ordering than BCE against one sampled negative, and the effect
 grows as the metric becomes more sensitive to position — invisible to HR, visible in NDCG,
@@ -294,7 +294,7 @@ via offline rescoring, and they are worth pausing on:
 |---|---|---|---|---|
 | this repo (BCE + 1 sampled negative) | 0.8190 | 0.5948 | 0.2475 | 0.1322 |
 | RecBole, dropout 0.2 (CE over full catalog) | 0.8240 | 0.6389 | **0.3467** | **0.2029** |
-| relative difference | +0.61% | +7.41% | **+40.1%** | **+53.5%** |
+| relative difference | +0.61% | +7.40% | **+40.1%** | **+53.5%** |
 
 All four sampled figures are on the frozen `negatives.json`, so the row is directly
 comparable throughout.

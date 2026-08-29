@@ -58,7 +58,8 @@ generative model reaches 71% of SASRec's sampled HR@10 while running on **13.7% 
 structurally unreachable for an atomic embedding table: on items never seen in training, 7.25%
 HR@10 against SASRec's 0.00% (Fisher exact, one-sided *p* = 0.0008) — **but only with popularity
 debiasing applied at ranking time**. As trained it is 1 hit in 138 (0.72%, *p* = 0.50), and the
-debiasing that buys those 10 hits costs 80% of overall accuracy. The reach is real and it is not
+debiasing that buys those 10 hits costs more than half of the model's own overall accuracy
+(0.0251 → 0.0117 HR@10), leaving it 80% below SASRec. The reach is real and it is not
 free; the full ledger is in the cold-start section. On
 [ML-1M](#the-same-comparison-on-ml-1m--the-dense-regime) the accuracy verdict repeats — −53.0%
 full HR@10 against Beauty's −57.7% — but the compression does not: **51.8%** of the parameters
@@ -130,7 +131,7 @@ Everything below follows the same three rules; deviations are marked at the poin
 | **SASRec (this repo)** | **0.8190** | **0.5948** | ✅ inside the accepted band (0.80–0.83 / 0.57–0.60) |
 | SASRec (RecBole, dropout 0.5 — its default) | 0.7768 | 0.5702 | measures the dropout default, not the implementation |
 | SASRec (RecBole, dropout 0.2) | 0.8056 | **0.6063** | dropout-only rerun |
-| SASRec (RecBole, dropout 0.2, rescored on frozen negatives) | 0.8240 | 0.6389 | +0.61% HR@10 vs this repo; +7.41% NDCG@10 |
+| SASRec (RecBole, dropout 0.2, rescored on frozen negatives) | 0.8240 | 0.6389 | +0.61% HR@10 vs this repo; +7.40% NDCG@10 |
 | BERT4Rec (RecBole) | 0.8031 | 0.6036 | see below |
 
 All RecBole rows are 200 epochs.
@@ -140,12 +141,14 @@ All RecBole rows are 200 epochs.
 | Comparison (protocol- and budget-matched) | HR@10 | NDCG@10 | Winner |
 |---|---|---|---|
 | BERT4Rec vs RecBole SASRec (**dropout 0.5**, default) | +3.39% | +5.86% | BERT4Rec, on both |
-| BERT4Rec vs this repo's SASRec | −1.94% | +1.48% | tie |
+| BERT4Rec vs this repo's SASRec | −1.95% | +1.47% | tie |
 | BERT4Rec vs RecBole SASRec (**dropout 0.2**) | −0.31% | −0.45% | SASRec, on both |
 | *effect of the dropout default alone* | *+3.71%* | *+6.33%* | — |
 
-The residual SASRec-vs-BERT4Rec margin (+0.31% / +0.45%) sits inside the measured noise floor and
-should be read as a tie. The dropout effect is 4–6× the floor.
+The residual SASRec-vs-BERT4Rec margin (+0.31% / +0.45%) should be read as a tie. Against the
+dropout-0.2 configuration's own measured floors — 0.67% on HR@10 and 0.38% on NDCG@10, each with one
+side borrowed from a single-seed BERT4Rec — it is inside the floor on HR@10 and 1.2× it on NDCG@10.
+The dropout effect clears those same floors by 5.5× and 17×.
 
 This repo walked into the failure mode by matching the *evaluation* protocol across models with
 care and never checking that the *model* hyperparameters were comparable — which is precisely what
@@ -212,7 +215,7 @@ NDCG gaining more than HR — the same monotone-in-rank-sensitivity pattern, fro
 line. It accounts for **56% of the full HR@10 gap and 60% of the full NDCG@10 gap**.
 
 It does not account for all of it. The residual is +14.30% / +16.06% seed-42-to-seed-42, and
-**+15.87% / +17.16%** on three-seed means now that RecBole has seeds of its own. Either way it
+**+15.86% / +17.15%** on three-seed means now that RecBole has seeds of its own. Either way it
 clears the floor for this particular comparison — 3.84%, built from RecBole's measured 1.83%
 full-ranking spread and CE's 0.58% rather than from one blanket number — so it is real, and what
 remains on the table is architecture and batch size. The suspect named in earlier versions of this README was the right one, but it was never the
@@ -533,7 +536,7 @@ that prefix, and let the model's own scores rank what is left.
 | 0 (as it runs) | 12,096 | 0.0251 | 0.0131 |
 | 1 | 51 | **0.3117** | 0.1627 |
 | 2 | 2 | 0.9880 | 0.7767 |
-| 3 | 1 | 1.0000 | 0.9457 |
+| 3 | 1 | 1.0000 | 0.9458 |
 
 Not comparable to SASRec's 0.0594 — SASRec gets no oracle. Read it as a decomposition of where the
 probability mass goes wrong. Depth 0 reproduces the reported GenRec row exactly (0.0251) and the
@@ -648,11 +651,11 @@ ablation arm has a second seed of its own.
 | Ablation | sampled HR@10 | Δ | full HR@10 | Δ | avg s/epoch |
 |---|---|---|---|---|---|
 | **Baseline (learnable pos emb, maxlen 200)** | **0.8152** | — | **0.2349** | — | 5.85 |
-| positional embedding = none | 0.8066 | −1.05% | 0.2291 | ~ −2.47% | 7.47 |
-| positional embedding = sinusoidal | 0.8147 | ~ −0.06% | 0.2182 | −7.11% | 6.91 |
-| maxlen = 50 | 0.7858 | −3.61% | 0.2033 | −13.45% | 1.53 |
-| maxlen = 100 | 0.8058 | −1.15% | 0.2346 | ~ −0.13% | 2.85 |
-| negative sampling = popularity-weighted | 0.7540 | −7.51% | 0.1871 | −20.35% | 6.93 |
+| positional embedding = none | 0.8066 | −1.06% | 0.2291 | ~ −2.47% | 7.47 |
+| positional embedding = sinusoidal | 0.8147 | ~ −0.06% | 0.2182 | −7.12% | 6.91 |
+| maxlen = 50 | 0.7858 | −3.61% | 0.2033 | −13.46% | 1.53 |
+| maxlen = 100 | 0.8058 | −1.16% | 0.2346 | ~ −0.14% | 2.85 |
+| negative sampling = popularity-weighted | 0.7540 | −7.51% | 0.1871 | −20.37% | 6.93 |
 
 Two notes on reading this table. First, it is baselined at a matched budget: an earlier version
 charged every ablation for 100 fewer epochs than its baseline, which is small on sampled HR@10
@@ -663,7 +666,7 @@ than half the per-epoch cost.
 
 Second, positional embeddings are the interesting row: dropping them costs ~1% sampled and nothing
 detectable on full ranking, while *sinusoidal* is the one variant that clearly hurts full ranking
-(−7.11%). Learnable-vs-none is nearly a wash; learnable-vs-sinusoidal is not.
+(−7.12%). Learnable-vs-none is nearly a wash; learnable-vs-sinusoidal is not.
 
 ### Noise floor — ML-1M SASRec, 5 seeds (42, 1–4)
 
@@ -693,11 +696,14 @@ was wrong in both directions.** Every configuration with three or more seeds now
 | CE + 2 heads | 3 | 0.50% | **1.32%** |
 | RecBole SASRec, dropout 0.2, rescored here | 3 | 0.23% | **1.83%** |
 | RecBole SASRec, dropout 0.2, RecBole's own uni100 | 3 | 0.24% | — |
+| SASRec on Beauty, BCE | 3 | 0.78% | 3.73% |
+| GenRec on Beauty, semantic IDs | 3 | 0.98% | **13.57%** |
+| GenRec on ML-1M, semantic IDs | 3 | 2.40% | 4.87% |
 
 Per-run relative standard deviation, worst metric per protocol. Read the full-ranking column: it
 spans **0.58% to 13.57%**, a factor of twenty-three across configurations that differ by one field,
-one framework, one dataset, or one item representation (Beauty's GenRec is the top of that range,
-and the only entry not measured through MLflow — see below). Borrowing the BCE baseline's 1.19% overstates the CE family's noise by 2× — which is how
+one framework, one dataset, or one item representation (the two GenRec rows are the only entries
+whose full-ranking spread is not measured through MLflow — see below). Borrowing the BCE baseline's 1.19% overstates the CE family's noise by 2× — which is how
 `width64`'s real effect spent a day misfiled as noise — and *understates* RecBole's by 1.5×, which
 would wave through a full-ranking margin RecBole's own seeds cannot support. Both directions of
 error, from one borrowed number. There is no corrected constant, only per-configuration spreads.
@@ -810,6 +816,14 @@ uv run python -m scripts.seed_variance --prefix sasrec_beauty   # the same, for 
 # for s in 1 2; do uv run python -m src.train --config configs/sasrec_beauty.yaml \
 #     --seed $s --run-name sasrec_beauty_seed$s; done
 
+# GenRec's own seeds, and the exhaustive spread they feed (~1h per Beauty run,
+# ~3h20m per ML-1M run; then ~55 min of scoring per Beauty seed, ~8 min per ML-1M seed):
+# for s in 1 2; do uv run python -m src.train_genrec --config configs/genrec_beauty.yaml \
+#     --seed $s --run-name genrec_beauty_seed$s; done
+uv run python -m scripts.genrec_seed_spread   # Beauty; --limit N to sanity-check on a subset
+uv run python -m scripts.genrec_seed_spread --genrec-config configs/genrec_ml1m.yaml \
+    --run-names genrec_ml1m genrec_ml1m_seed1 genrec_ml1m_seed2
+
 # The same comparison on ML-1M (~8 min: 3,416 items x 6,040 test users)
 uv run python -m scripts.compare_atomic_vs_semantic \
     --sasrec-config configs/sasrec_ml1m.yaml --genrec-config configs/genrec_ml1m.yaml
@@ -819,8 +833,12 @@ uv run pytest tests/
 ```
 
 Experiment tracking is MLflow (`sqlite:///mlflow.db`, experiment `sequential-rec`); the master
-table is generated from it rather than transcribed. Long GPU sweeps run detached on remote
-sandboxes via `scripts/daytona_*.py`, with result recovery for interrupted runs.
+table is generated from it rather than transcribed. Every table on this page is asserted against the
+thing that produced it by `tests/test_readme_matches_results.py` — measured cells against
+`results/tables/` and `mlflow.db`, derived cells recomputed from those at full precision — so a
+figure that drifts from its source fails CI instead of waiting to be noticed by a reader. Long GPU
+sweeps run detached on remote sandboxes via `scripts/daytona_*.py`, with result recovery for
+interrupted runs.
 
 ---
 
@@ -847,7 +865,7 @@ implied.
 - **The blanket noise floor is retired, and what replaced it is still partial.** The 0.96% / 3.37%
   figures come from five seeds of one configuration, and applying them elsewhere was wrong in both
   directions: too wide for the CE family (hiding width64's real effect) and too narrow for RecBole's
-  full-ranking numbers (1.83% per run against the borrowed 1.19%). Seven configurations now carry
+  full-ranking numbers (1.83% per run against the borrowed 1.19%). Ten configurations now carry
   their own measured spread and every margin is judged against the two it actually compares. What is
   still unmeasured: RecBole's dropout-0.5 and BERT4Rec runs, and the ablation arms at their own
   100-epoch budget. Beauty's SASRec, and as of 2026-08-28 GenRec on both datasets, have three seeds
@@ -877,8 +895,8 @@ implied.
   [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md) §4.
 - **RecBole's dropout-0.2 run now has three seeds; every other RecBole number is still one.** The
   dropout-0.2 SASRec was re-run at seeds 1 and 2, which is what put a measured floor under the
-  headline margin it carries (+3.71% / +6.33% on uni100, against that configuration's own 0.67%
-  floor — 5.5× and 17× clear). The dropout-0.5 SASRec and both BERT4Rec runs remain single-seed, so
+  headline margin it carries (+3.71% / +6.33% on uni100, against that configuration's own floors —
+  0.67% on HR@10 and 0.38% on NDCG@10 — 5.5× and 17× clear). The dropout-0.5 SASRec and both BERT4Rec runs remain single-seed, so
   any margin involving them is still judged against a partly borrowed floor. RecBole's full-ranking
   spread was the widest measured here until Beauty's SASRec was seeded (3.73%), and that in turn
   until Beauty's GenRec was (13.57%).

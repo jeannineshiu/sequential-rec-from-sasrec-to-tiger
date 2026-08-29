@@ -1577,3 +1577,104 @@ the code in the same commit. The test that catches prose drifting from an artifa
 artifact drifting from the code that claims to produce it. What would: regenerating them, which is
 cheap, and which nothing was asking anyone to do.
 
+
+---
+
+## Post-Week-6 (cont.) — every table on the page now reproduces, and ten cells did not
+
+*2026-08-29.* `tests/test_readme_matches_results.py` had covered four of the README's twenty-four
+tables since 2026-08-25: the cold-start buckets, the unseen-bucket counts, the diversity table and
+ML-1M's atomic-vs-semantic full-ranking columns. Those four were the ones a bug had already been
+found in. The other twenty were transcribed by hand and checked by reading, which is the method that
+let *p* = 0.059 stand for weeks.
+
+The tests now cover all twenty-four. Each table is asserted against whatever produced it — the JSON
+and markdown reports in `results/tables/`, the runs in `mlflow.db` read through `export_results`' own
+filters, and `seed_variance`'s own `family_spreads` and a new `arm_stats` for the seeded comparisons.
+Derived columns are recomputed rather than read, since a Δ is the cell a corrected number is easiest
+to leave stale. Cells are compared at the precision the page printed them, so 0.0251 must agree to
+four decimals and −57.7% to one.
+
+### What it found: ten cells, all in derived columns but one
+
+| where | printed | correct |
+|---|---|---|
+| reproduction table, rescored row's note | +7.41% NDCG@10 | +7.40% |
+| dropout table, BERT4Rec vs this repo's SASRec | −1.94% / +1.48% | −1.95% / +1.47% |
+| oracle depth table, d=3 | NDCG@10 0.9457 | 0.9458 |
+| ablations, pos-emb none, sampled Δ | −1.05% | −1.06% |
+| ablations, pos-emb sinusoidal, full Δ | −7.11% | −7.12% |
+| ablations, maxlen 50, full Δ | −13.45% | −13.46% |
+| ablations, maxlen 100, sampled / full Δ | −1.15% / −0.13% | −1.16% / −0.14% |
+| ablations, popularity negatives, full Δ | −20.35% | −20.37% |
+
+Nothing moves a verdict; the largest change is 0.02pp. What is worth recording is the *pattern*.
+Nine of the ten are relative differences, and eight of those reproduce exactly if you recompute them
+from the four-decimal values printed in `master.md` instead of from the metrics themselves. They are
+not typos: they are the arithmetic of a table done on the table rather than on the data. The
+ablations column is the clearest case — every one of its deltas is the rounded-input answer, and
+each is truncated toward zero rather than rounded, which is what a person reading two rounded cells
+off a page and dividing produces.
+
+The tenth is different and simpler: the oracle table's depth-3 NDCG@10 was copied as 0.9457 from an
+artifact that says 0.9458. One digit, hand-carried, in the only cell of that table nothing else
+quotes.
+
+The same three figures were restated six times in `docs/bert4rec-controversy.md`, which is corrected
+with them.
+
+### What the tests do not cover
+
+SASRec's parameter counts (828,352 and 212,000) are logged nowhere — `train_genrec` records
+`n_params` and `train` does not — so the two atomic rows of the parameter column are unchecked. The
+compression claim built on them is checked as arithmetic on the printed pair, which catches a stale
+ratio but not a wrong count. Prose outside tables is still unchecked apart from the unseen-bucket
+hit counts, which were promoted into a test when they turned out to carry a qualifier the headline
+had dropped.
+
+### The rule
+
+A number that is arithmetic on two other numbers should be computed from the data, not from the
+page. Every cell here was correct at the precision its inputs were printed to, and wrong at the
+precision it was itself printed to — a rounding error that only exists because the intermediate
+value was rounded first. The check that catches it is not more care; it is recomputing the derived
+column in the test, which is now what happens.
+
+### Addendum, same day — the verification pass the tests do not do
+
+The tests above check tables. Reading the rest of the page found five more things, four of them
+wrong and one of them out of date:
+
+- **Key finding 4 said popularity debiasing "costs 80% of overall accuracy."** It costs 53%:
+  overall HR@10 goes 0.0251 → 0.0117. The 80% is the debiased model's gap to *SASRec*, which is a
+  different quantity, and the cold-start section three screens down had it right — "more than half
+  the overall accuracy." The headline had been comparing the debiased model to the wrong baseline
+  since 2026-08-25.
+- **The residual on three-seed means read +15.87% / +17.16%; it is +15.86% / +17.15%.** Same
+  truncation as the ablation deltas, in the same commit family, carried in both the README and
+  `seed_variance`'s claimed-margin list.
+- **"+3.71% / +6.33% ... against that configuration's own 0.67% floor — 5.5× and 17× clear."**
+  6.33/0.67 is 9.4, not 17. The 17× is against NDCG@10's own floor of 0.38%; two floors were being
+  quoted as one. Corrected in both places, and the same sentence in the dropout section — "sits
+  inside the measured noise floor" — was too generous: the −0.45% NDCG residual is 1.2× that 0.38%
+  floor, not inside it. It is still a tie, because one side of the floor is a single-seed BERT4Rec,
+  but the reason is now stated rather than implied.
+- **The per-configuration spread table listed seven of ten seeded configurations** while the
+  sentence above it claimed all of them, and the paragraph below read a 13.57% off a column whose
+  largest entry was 1.83%. Beauty's SASRec and both GenRec families are now rows.
+- **`seed_variance.CLAIMED_MARGINS` had drifted from the page**: +7.41%, six ablation deltas and a
+  Beauty margin of −57.83% its own artifact stopped supporting on 2026-08-29. No verdict changed,
+  but the script that judges every margin was judging figures the README no longer makes.
+
+The last one is now tested: `test_seed_variance_claimed_margins_match_their_sources` recomputes all
+thirty-seven claimed margins from the runs and artifacts they summarize, and fails if a margin is
+added without one.
+
+Verified and unchanged: every repo-relative link and anchor resolves; every `uv run` command in
+Reproduce names a module that imports and flags that exist; the parameter arithmetic (782 and 773
+token embeddings, 38,650 against 170,850, the positional table's 10,050 → 40,050); the greedy legal
+rates (81.8% / 98.9%); 981,491 augmented targets against 647,430 and 13,488 per update; best
+validation at epoch 195 for BCE and 198 for CE, with CE crossing BCE's best at 36; both tail
+p-values; and the five-seed floors. The Reproduce block was missing the GenRec seed runs and
+`genrec_seed_spread` entirely — the newest experiments on the page were not reproducible from it —
+and now has them.

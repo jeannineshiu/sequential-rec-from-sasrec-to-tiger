@@ -99,7 +99,7 @@ CLAIMED_MARGINS = [
     ),
     (
         "M4 cross-check: RecBole vs this repo, NDCG@10",
-        7.41,
+        7.40,
         "sampled",
         "M4 criterion",
         "recbole_d02",
@@ -127,7 +127,7 @@ CLAIMED_MARGINS = [
     # (+14.30% / +16.06%) understated it.
     (
         "Residual: RecBole vs CE, full HR@10 (3-seed means)",
-        15.87,
+        15.86,
         "full",
         "loss ablation",
         "recbole_d02",
@@ -135,7 +135,7 @@ CLAIMED_MARGINS = [
     ),
     (
         "Residual: RecBole vs CE, full NDCG@10 (3-seed means)",
-        17.16,
+        17.15,
         "full",
         "loss ablation",
         "recbole_d02",
@@ -199,15 +199,15 @@ CLAIMED_MARGINS = [
     # flip two conclusions. See REPRODUCTION_LOG.md. Both sides are the BCE
     # configuration, but at 100 epochs rather than the 200 the seeds were run at.
     ("A1: sinusoidal vs learnable pos emb", -0.06, "sampled", "ablation table", "bce", "bce"),
-    ("A1: none vs learnable pos emb", -1.05, "sampled", "ablation table", "bce", "bce"),
-    ("A2: maxlen 100 vs 200", -1.15, "sampled", "ablation table", "bce", "bce"),
+    ("A1: none vs learnable pos emb", -1.06, "sampled", "ablation table", "bce", "bce"),
+    ("A2: maxlen 100 vs 200", -1.16, "sampled", "ablation table", "bce", "bce"),
     ("A2: maxlen 50 vs 200", -3.61, "sampled", "ablation table", "bce", "bce"),
     ("A4: popularity vs uniform negatives", -7.51, "sampled", "ablation table", "bce", "bce"),
-    ("A1: sinusoidal vs learnable pos emb, full", -7.11, "full", "ablation table", "bce", "bce"),
+    ("A1: sinusoidal vs learnable pos emb, full", -7.12, "full", "ablation table", "bce", "bce"),
     ("A1: none vs learnable pos emb, full", -2.47, "full", "ablation table", "bce", "bce"),
-    ("A2: maxlen 100 vs 200, full", -0.13, "full", "ablation table", "bce", "bce"),
-    ("A2: maxlen 50 vs 200, full", -13.45, "full", "ablation table", "bce", "bce"),
-    ("A4: popularity vs uniform negatives, full", -20.35, "full", "ablation table", "bce", "bce"),
+    ("A2: maxlen 100 vs 200, full", -0.14, "full", "ablation table", "bce", "bce"),
+    ("A2: maxlen 50 vs 200, full", -13.46, "full", "ablation table", "bce", "bce"),
+    ("A4: popularity vs uniform negatives, full", -20.37, "full", "ablation table", "bce", "bce"),
     # Amazon Beauty, atomic vs semantic IDs. Both sides are seeded as of 2026-08-28:
     # the SASRec side by P5(b), the generative side by N2. Beauty is a different
     # dataset from every other family in this file, which is why borrowing ML-1M's
@@ -231,7 +231,7 @@ CLAIMED_MARGINS = [
     ),
     (
         "Beauty: GenRec vs SASRec, full HR@10",
-        -57.83,
+        -57.68,
         "full",
         "atomic-vs-semantic table",
         "beauty_sasrec",
@@ -463,30 +463,37 @@ def margin_floor(
     return floor, note
 
 
-def arm_seeds(tracking_uri: str, arm: str, control: str) -> None:
-    """Compare two seeded arms using their OWN measured spread, not the blanket floor.
+class ArmStat(NamedTuple):
+    """One metric's Welch comparison of a seeded arm against a seeded control,
+    on the relative scale the README quotes."""
 
-    The blanket floor is five seeds of the BCE baseline. Applying it to a CE
-    configuration understated CE's reproducibility badly enough to hide a real
-    effect: width64 read as "INSIDE NOISE" at 3.33% against a 3.37% floor, while
-    the CE control's actual full HR@10 spread is 0.18%. Anything compared here is
-    tested against the variance of the configurations being compared.
+    arm_mean: float
+    control_mean: float
+    arm_rel_std: float
+    control_rel_std: float
+    delta: float
+    ci_low: float
+    ci_high: float
+    p: float
+
+
+def arm_stats(
+    tracking_uri: str, arm: str, control: str
+) -> tuple[dict[str, ArmStat], list[str], list[str]]:
+    """The numbers behind `arm_seeds`, returned rather than printed.
+
+    Separated out so the README's three arm tables can be asserted against the
+    same code that produced them: a test that recomputed Welch itself would agree
+    with a formula, not with this script.
     """
     from scipy import stats
 
     a, a_used = collect(tracking_uri, arm)
     c, c_used = collect(tracking_uri, control)
-    print(f"arm     ({len(a_used)}): {', '.join(a_used)}")
-    print(f"control ({len(c_used)}): {', '.join(c_used)}\n")
     if len(a_used) < 2 or len(c_used) < 2:
-        print("need >=2 seeds per arm")
-        return
+        return {}, a_used, c_used
 
-    header = (
-        f"{'metric':<20}{'arm mean':>10}{'ctl mean':>10}{'arm rsd':>9}{'ctl rsd':>9}"
-        f"{'delta':>9}{'95% CI':>18}{'p':>9}"
-    )
-    print(header)
+    out = {}
     for label, key in METRICS:
         x, y = a[key], c[key]
         d = (x.mean() - y.mean()) / y.mean() * 100
@@ -499,11 +506,47 @@ def arm_seeds(tracking_uri: str, arm: str, control: str) -> None:
             + (y.var(ddof=1) / len(y)) ** 2 / (len(y) - 1)
         )
         half = stats.t.ppf(0.975, df) * se / y.mean() * 100
-        ci = f"[{d - half:+.2f}%, {d + half:+.2f}%]"
+        out[label] = ArmStat(
+            arm_mean=float(x.mean()),
+            control_mean=float(y.mean()),
+            arm_rel_std=float(x.std(ddof=1) / x.mean() * 100),
+            control_rel_std=float(y.std(ddof=1) / y.mean() * 100),
+            delta=float(d),
+            ci_low=float(d - half),
+            ci_high=float(d + half),
+            p=float(pv),
+        )
+    return out, a_used, c_used
+
+
+def arm_seeds(tracking_uri: str, arm: str, control: str) -> None:
+    """Compare two seeded arms using their OWN measured spread, not the blanket floor.
+
+    The blanket floor is five seeds of the BCE baseline. Applying it to a CE
+    configuration understated CE's reproducibility badly enough to hide a real
+    effect: width64 read as "INSIDE NOISE" at 3.33% against a 3.37% floor, while
+    the CE control's actual full HR@10 spread is 0.18%. Anything compared here is
+    tested against the variance of the configurations being compared.
+    """
+    stats_by_metric, a_used, c_used = arm_stats(tracking_uri, arm, control)
+    print(f"arm     ({len(a_used)}): {', '.join(a_used)}")
+    print(f"control ({len(c_used)}): {', '.join(c_used)}\n")
+    if not stats_by_metric:
+        print("need >=2 seeds per arm")
+        return
+
+    header = (
+        f"{'metric':<20}{'arm mean':>10}{'ctl mean':>10}{'arm rsd':>9}{'ctl rsd':>9}"
+        f"{'delta':>9}{'95% CI':>18}{'p':>9}"
+    )
+    print(header)
+    for label, _ in METRICS:
+        s = stats_by_metric[label]
+        ci = f"[{s.ci_low:+.2f}%, {s.ci_high:+.2f}%]"
         print(
-            f"{label:<20}{x.mean():>10.4f}{y.mean():>10.4f}"
-            f"{x.std(ddof=1) / x.mean() * 100:>8.2f}%{y.std(ddof=1) / y.mean() * 100:>8.2f}%"
-            f"{d:>8.2f}%{ci:>18}{pv:>9.4f}"
+            f"{label:<20}{s.arm_mean:>10.4f}{s.control_mean:>10.4f}"
+            f"{s.arm_rel_std:>8.2f}%{s.control_rel_std:>8.2f}%"
+            f"{s.delta:>8.2f}%{ci:>18}{s.p:>9.4f}"
         )
 
 
