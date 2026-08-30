@@ -3,15 +3,37 @@
 [![CI](https://github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger/actions/workflows/ci.yml/badge.svg)](https://github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 
-A controlled study of sequential recommendation, from the 2018 self-attentive baseline to a
-generative retriever that emits items as sequences of quantized semantic tokens — one codebase, one
-evaluation harness, one set of frozen negatives, so that every number on this page is differenced
-against something measured the same way.
+## In 30 seconds
 
-The repo has two deliverables. The first is a **faithful, verified SASRec reproduction** on
-MovieLens-1M and Amazon Beauty. The second is a **generative recommender built on the same
-backbone**, where items are emitted as sequences of semantic tokens rather than looked up in an
-embedding table — and a measurement of exactly what that representation buys and what it costs.
+Two deliverables on one codebase, one evaluation harness, and one set of frozen negatives: a
+**verified SASRec reproduction** (ML-1M, Amazon Beauty), and a **generative recommender on the same
+backbone**, which emits items as sequences of quantized semantic tokens instead of looking them up
+in an embedding table. Four results, in the order they would change what someone does:
+
+1. **A framework's default hyperparameter outweighed the architecture it was used to demonstrate.**
+   RecBole's SASRec and BERT4Rec configs differ on exactly one architectural line — dropout, 0.5 vs
+   0.2. Aligning it moves the comparison by +3.71% HR@10, more than the margin the comparison was
+   meant to explain, and enough to flip the winner. [Details](#the-dropout-default).
+2. **Agreement under the sampled protocol is not agreement.** Two SASRecs matching to +0.61% on
+   sampled HR@10 diverge by **+40% HR@10 / +53% NDCG@10** under full-catalog ranking. A loss-only
+   ablation accounts for 56% of that gap — and measures −0.38%, inside seed noise, on the sampled
+   protocol. [Details](#the-training-objective-isolated).
+3. **Semantic IDs buy compression and reach, not accuracy.** On Beauty: **13.7% of the parameters**
+   for 71% of SASRec's sampled HR@10, plus cold-start items an atomic embedding table cannot reach
+   at all (7.25% vs 0.00%) — but only under a popularity debiasing that costs more than half of the
+   model's own accuracy. On ML-1M the accuracy verdict repeats and the compression does not
+   (51.8%): the saving scales with the catalog, not with the method.
+   [Details](#atomic-vs-semantic-ids--amazon-beauty-test-k10).
+4. **Every margin is judged against a measured seed-noise floor**, ten configurations deep, with
+   negative and mixed results reported as they came out — including the one where the generative
+   model is the noisiest thing here, on the protocol that carries the argument. Every table below is
+   asserted in CI against the run that produced it, so a figure that drifts from its source fails
+   the build instead of waiting to be noticed by a reader.
+
+The rest of this page is the long version: [Key findings](#key-findings) expands these four to six,
+and [Limitations and open questions](#limitations-and-open-questions) is kept current.
+
+---
 
 **What the second deliverable is, precisely.** It tests *semantic IDs as an item representation*,
 under a single-variable ablation. It is not a TIGER reproduction. TIGER pairs semantic IDs with a T5
@@ -24,9 +46,6 @@ evidence rather than on budget: residual K-Means produces **zero dead codes on b
 ([below](#semantic-id-quality)), so the codebook-collapse failure mode RQ-VAE exists to fix does not
 arise here. That is a finding, not a shortcut. The title names the direction of travel; the
 experiments are on the item representation.
-
-Both are evaluated under two protocols side by side (sampled and full-catalog ranking), against a
-measured seed-noise floor, with negative and mixed results reported as they came out.
 
 ---
 
