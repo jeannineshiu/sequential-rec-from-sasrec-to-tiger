@@ -1,107 +1,124 @@
 # From SASRec to TIGER
 
+**A verified SASRec reproduction and a semantic-ID generative recommender on one backbone, one
+evaluation harness, and one set of frozen negatives — with every reported margin judged against a
+measured seed-noise floor.**
+
 [![CI](https://github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger/actions/workflows/ci.yml/badge.svg)](https://github.com/jeannineshiu/sequential-rec-from-sasrec-to-tiger/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
-
-## In 30 seconds
-
-Two deliverables on one codebase, one evaluation harness, and one set of frozen negatives: a
-**verified SASRec reproduction** (ML-1M, Amazon Beauty), and a **generative recommender on the same
-backbone**, which emits items as sequences of quantized semantic tokens instead of looking them up
-in an embedding table. Four results, in the order they would change what someone does:
-
-1. **A framework's default hyperparameter outweighed the architecture it was used to demonstrate.**
-   RecBole's SASRec and BERT4Rec configs differ on exactly one architectural line — dropout, 0.5 vs
-   0.2. Aligning it moves the comparison by +3.71% HR@10, more than the margin the comparison was
-   meant to explain, and enough to flip the winner. [Details](#the-dropout-default).
-2. **Agreement under the sampled protocol is not agreement.** Two SASRecs matching to +0.61% on
-   sampled HR@10 diverge by **+40% HR@10 / +53% NDCG@10** under full-catalog ranking. A loss-only
-   ablation accounts for 56% of that gap — and measures −0.38%, inside seed noise, on the sampled
-   protocol. [Details](#the-training-objective-isolated).
-3. **Semantic IDs buy compression and reach, not accuracy.** On Beauty: **13.7% of the parameters**
-   for 71% of SASRec's sampled HR@10, plus cold-start items an atomic embedding table cannot reach
-   at all (7.25% vs 0.00%) — but only under a popularity debiasing that costs more than half of the
-   model's own accuracy. On ML-1M the accuracy verdict repeats and the compression does not
-   (51.8%): the saving scales with the catalog, not with the method.
-   [Details](#atomic-vs-semantic-ids--amazon-beauty-test-k10).
-4. **Every margin is judged against a measured seed-noise floor**, ten configurations deep, with
-   negative and mixed results reported as they came out — including the one where the generative
-   model is the noisiest thing here, on the protocol that carries the argument. Every table below is
-   asserted in CI against the run that produced it, so a figure that drifts from its source fails
-   the build instead of waiting to be noticed by a reader.
-
-The rest of this page is the long version: [Key findings](#key-findings) expands these four to six,
-and [Limitations and open questions](#limitations-and-open-questions) is kept current.
+![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
+![Datasets](https://img.shields.io/badge/datasets-ML--1M%20%7C%20Amazon%20Beauty-lightgrey)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
 
-**What the second deliverable is, precisely.** It tests *semantic IDs as an item representation*,
-under a single-variable ablation. It is not a TIGER reproduction. TIGER pairs semantic IDs with a T5
-encoder–decoder, an RQ-VAE quantizer, and a user token; none of those are here. The generative model
-runs on SASRec's own transformer stack, and that is the point: swapping the backbone *and* the item
-representation at once would produce exactly the kind of comparison this repo exists to document —
-one where the measured effect belongs to something nobody chose to test. Holding the backbone fixed
-is what makes "atomic vs. semantic ID" a clean single variable. RQ-VAE was skipped on measured
-evidence rather than on budget: residual K-Means produces **zero dead codes on both datasets**
-([below](#semantic-id-quality)), so the codebook-collapse failure mode RQ-VAE exists to fix does not
-arise here. That is a finding, not a shortcut. The title names the direction of travel; the
-experiments are on the item representation.
+## Summary
 
----
+Two deliverables on one codebase: a **verified SASRec reproduction** (ML-1M, Amazon Beauty), and a
+**generative recommender on the same backbone**, which emits items as sequences of quantized
+semantic tokens instead of looking them up in an embedding table. Six results, in the order they
+would change what someone does.
 
-## Key findings
+**1. A framework's default hyperparameter outweighed the architecture it was used to demonstrate.**
+RecBole's SASRec and BERT4Rec configs are identical on every architectural default except dropout
+(0.5 vs 0.2). Aligning that single line moves the SASRec–BERT4Rec comparison by +3.71% HR@10 /
++6.33% NDCG@10 — larger than the margin the comparison was meant to explain, and enough to flip the
+winner three ways. This puts the *premise* of the BERT4Rec controversy in question rather than
+settling it: the budget claim at its centre is untested here. → [§1.2](#12-the-dropout-default)
 
-**1. A framework's default hyperparameter outweighed the architectural effect it was used to
-demonstrate.** RecBole's SASRec and BERT4Rec configs are identical on every architectural default
-except dropout (0.5 vs 0.2). Aligning that single line moves the SASRec–BERT4Rec comparison by
-+3.71% HR@10 / +6.33% NDCG@10 — larger than the entire margin the comparison was meant to explain,
-and enough to flip the winner. Same BERT4Rec run, three conclusions. This puts the *premise* of the
-BERT4Rec controversy in question rather than settling it: the budget claim at its centre is
-[untested here](#the-dropout-default).
-
-**2. Agreement under the sampled protocol is not agreement.** Two SASRec implementations that match
-to +0.61% on sampled HR@10 diverge by **+40% HR@10 / +53% NDCG@10** under full-catalog ranking. Any
+**2. Agreement under the sampled protocol is not agreement.** Two SASRec implementations matching to
++0.61% on sampled HR@10 diverge by **+40% HR@10 / +53% NDCG@10** under full-catalog ranking. Any
 model selection done on the sampled protocol alone is selecting on a metric that does not preserve
-ordering.
+ordering. → [§2.1](#21-sampled-versus-full-catalog-ranking)
 
 **3. Most of that divergence is the training objective, and the sampled protocol is blind to it.**
 A loss-only ablation — full-catalog softmax instead of BCE against one sampled negative, nothing
 else touched — recovers **+22.54% full HR@10 / +32.29% full NDCG@10**, accounting for 56% and 60%
-of the cross-framework gap. On sampled HR@10 the same change measures **−0.38%, inside seed noise**.
-The objective is worth a fifth of the full-ranking score and is invisible to the protocol the
-original paper evaluated with.
+of the cross-framework gap. The same change measures **−0.38% on sampled HR@10, inside seed noise**.
+→ [§2.2](#22-training-objective)
 
-**4. Semantic IDs trade accuracy for compression and reach, not for accuracy.** On Beauty, the
-generative model reaches 71% of SASRec's sampled HR@10 while running on **13.7% of the parameters**
-(12,101 item embeddings collapse into 782 token embeddings). It also retrieves items that are
-structurally unreachable for an atomic embedding table: on items never seen in training, 7.25%
-HR@10 against SASRec's 0.00% (Fisher exact, one-sided *p* = 0.0008) — **but only with popularity
-debiasing applied at ranking time**. As trained it is 1 hit in 138 (0.72%, *p* = 0.50), and the
-debiasing that buys those 10 hits costs more than half of the model's own overall accuracy
-(0.0251 → 0.0117 HR@10), leaving it 80% below SASRec. The reach is real and it is not
-free; the full ledger is in the cold-start section. On
-[ML-1M](#the-same-comparison-on-ml-1m--the-dense-regime) the accuracy verdict repeats — −53.0%
-full HR@10 against Beauty's −57.7% — but the compression does not: **51.8%** of the parameters
-there, not 13.7%, because a 3,416-item table was never what cost anything. The saving scales with
-the catalog, not with the method.
+**4. Semantic IDs buy compression and reach, not accuracy.** On Beauty the generative model reaches
+71% of SASRec's sampled HR@10 on **13.7% of the parameters**, and retrieves items an atomic
+embedding table structurally cannot: 7.25% HR@10 on never-seen items against SASRec's 0.00%
+(Fisher exact, one-sided *p* = 0.0008). But that reach requires a popularity debiasing that costs
+more than half of the model's own accuracy, and on ML-1M the accuracy verdict repeats while the
+compression does not (51.8%) — the saving scales with the catalog, not with the method.
+→ [§3.1](#31-accuracy-compression-and-parameters--amazon-beauty), [§3.6](#36-the-dense-regime--ml-1m)
 
-**5. Swapping item representations silently swaps scoring rules — and that is where the damage
-is.** A generative model ranks by `P(item | history)`, which carries a popularity prior; a dot
-product does not. Constrained beam search compounds it: beam-20 reports HR@10 0.0407 where
-exhaustive scoring gives 0.0240, because the mean true rank of a beam-reported hit is 167. Both
-effects arrived with the architecture, uninvited, in the same way the dropout default arrived with
-the framework.
+**5. Swapping item representations silently swaps scoring rules.** A generative model ranks by
+`P(item | history)`, which carries a popularity prior; a dot product does not. Constrained beam
+search compounds it: beam-20 reports HR@10 0.0407 where exhaustive scoring gives 0.0240, because
+the mean true rank of a beam-reported hit is 167. Both effects arrived with the architecture,
+uninvited, in the same way the dropout default arrived with the framework.
+→ [§3.3](#33-recommendation-diversity-and-the-popularity-prior), [§3.5](#35-beam-search-as-a-ranker)
 
 **6. The generative model's deficit is not localized to one repairable stage.** Handing it the
-target's true first semantic code multiplies HR@10 by 12.4x — and still leaves **69% of targets
+target's true first semantic code multiplies HR@10 by 12.4× — and still leaves **69% of targets
 outside the top 10 with a median of 51 candidates remaining**. Its level-1 prediction is not lost
-either (median rank 26 of 256 against 128 for chance). An earlier reading of this repo's per-level
-accuracies called the first code the binding constraint; measured in retrieval terms it is
-expensive but not binding, and no better decoder recovers the rest.
+either (median rank 26 of 256 against 128 for chance). No better decoder recovers the rest.
+→ [§3.4](#34-oracle-prefix-decomposition)
+
+Every margin above is judged against a seed-noise floor measured on the configurations it compares,
+ten configurations deep, and negative and mixed results are reported as they came out — including
+the one where the generative model is the noisiest thing here, on the protocol that carries the
+argument. Every table on this page is asserted in CI against the run that produced it, so a figure
+that drifts from its source fails the build instead of waiting to be noticed by a reader.
 
 ---
 
-## What's in the repo
+## Scope
+
+This repo tests *semantic IDs as an item representation*, under a single-variable ablation. **It is
+not a TIGER reproduction.** TIGER pairs semantic IDs with a T5 encoder–decoder, an RQ-VAE
+quantizer, and a user token; none of those are here. The generative model runs on SASRec's own
+transformer stack, and that is the point: swapping the backbone *and* the item representation at
+once would produce exactly the kind of comparison this repo exists to document — one where the
+measured effect belongs to something nobody chose to test. Holding the backbone fixed is what makes
+"atomic vs. semantic ID" a clean single variable.
+
+RQ-VAE was skipped on measured evidence rather than on budget: residual K-Means produces **zero dead
+codes on both datasets** ([§4.3](#43-semantic-id-quality)), so the codebook-collapse failure mode
+RQ-VAE exists to fix does not arise here. That is a finding, not a shortcut.
+
+The title names the direction of travel; the experiments are on the item representation.
+
+---
+
+## Contents
+
+- [Repository layout](#repository-layout)
+- [Data and evaluation protocol](#data-and-evaluation-protocol)
+- [Results](#results)
+  - [1. SASRec reproduction and the cross-framework gap](#1-sasrec-reproduction-and-the-cross-framework-gap)
+    — [1.1 Reproduction against published numbers](#11-reproduction-against-published-numbers)
+    · [1.2 The dropout default](#12-the-dropout-default)
+  - [2. What the sampled protocol hides](#2-what-the-sampled-protocol-hides)
+    — [2.1 Sampled versus full-catalog ranking](#21-sampled-versus-full-catalog-ranking)
+    · [2.2 Training objective](#22-training-objective)
+    · [2.3 Architecture: width, update granularity, head count](#23-architecture-width-update-granularity-head-count)
+  - [3. Semantic IDs versus atomic IDs](#3-semantic-ids-versus-atomic-ids)
+    — [3.1 Accuracy, compression, and parameters — Amazon Beauty](#31-accuracy-compression-and-parameters--amazon-beauty)
+    · [3.2 Cold start by item frequency](#32-cold-start-by-item-frequency)
+    · [3.3 Recommendation diversity and the popularity prior](#33-recommendation-diversity-and-the-popularity-prior)
+    · [3.4 Oracle-prefix decomposition](#34-oracle-prefix-decomposition)
+    · [3.5 Beam search as a ranker](#35-beam-search-as-a-ranker)
+    · [3.6 The dense regime — ML-1M](#36-the-dense-regime--ml-1m)
+  - [4. Supporting measurements](#4-supporting-measurements)
+    — [4.1 Hyperparameter ablations](#41-hyperparameter-ablations)
+    · [4.2 Seed-noise floors](#42-seed-noise-floors)
+    · [4.3 Semantic ID quality](#43-semantic-id-quality)
+- [Serving demo](#serving-demo)
+- [Reproduce](#reproduce)
+- [Limitations and open questions](#limitations-and-open-questions)
+- [References](#references) · [Supporting documents](#supporting-documents)
+- [License and dataset terms](#license-and-dataset-terms)
+
+This page reports current state. The dated trail of how it got there — including every result later
+corrected — is [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md).
+
+---
+
+## Repository layout
 
 | Component | Path | Notes |
 |---|---|---|
@@ -115,14 +132,23 @@ expensive but not binding, and no better decoder recovers the rest.
 | Serving demo | `serving/app.py` | FastAPI; both models side by side with decoded semantic IDs |
 | Remote GPU orchestration | `scripts/daytona_*.py` | Detached, host-independent sweeps with result recovery |
 
-Datasets after 5-core filtering and leave-one-out splitting: **ML-1M** — 6,040 users / 3,416 items;
-**Amazon Beauty** — 22,363 users / 12,101 items.
+Experiment tracking is MLflow (`sqlite:///mlflow.db`, experiment `sequential-rec`). Timings quoted
+throughout are for an Apple M-series GPU (MPS) unless stated otherwise.
 
 ---
 
-## Evaluation protocol
+## Data and evaluation protocol
 
-Everything below follows the same three rules; deviations are marked at the point of use.
+| Dataset | Users | Items | Preprocessing |
+|---|---|---|---|
+| MovieLens-1M | 6,040 | 3,416 | 5-core filtering, leave-one-out split |
+| Amazon Beauty | 22,363 | 12,101 | 5-core filtering, leave-one-out split |
+
+Neither dataset is redistributed here; `src.data.download` fetches both from their original hosts,
+and `data/` is gitignored. Both carry their own terms — see
+[License and dataset terms](#license-and-dataset-terms).
+
+Every result below follows the same three rules; deviations are marked at the point of use.
 
 - **Two protocols, always reported together.** The *sampled* protocol (1 positive + 100 uniform
   negatives) matches the original SASRec paper. The *full* protocol ranks against the entire
@@ -140,14 +166,18 @@ Everything below follows the same three rules; deviations are marked at the poin
 
 ## Results
 
-### SASRec reproduction — ML-1M, sampled protocol, test, k=10
+### 1. SASRec reproduction and the cross-framework gap
+
+#### 1.1 Reproduction against published numbers
+
+*ML-1M, sampled protocol, test, k=10.*
 
 | Model | HR@10 | NDCG@10 | Note |
 |---|---|---|---|
 | Popularity | 0.4363 | 0.2401 | floor |
 | BPR-MF | 0.5745 | 0.3357 | floor |
 | SASRec — Kang & McAuley (2018) | 0.8245 | 0.5905 | target |
-| **SASRec (this repo)** | **0.8190** | **0.5948** | ✅ inside the accepted band (0.80–0.83 / 0.57–0.60) |
+| **SASRec (this repo)** | **0.8190** | **0.5948** | inside the accepted band (0.80–0.83 / 0.57–0.60) |
 | SASRec (RecBole, dropout 0.5 — its default) | 0.7768 | 0.5702 | measures the dropout default, not the implementation |
 | SASRec (RecBole, dropout 0.2) | 0.8056 | **0.6063** | dropout-only rerun |
 | SASRec (RecBole, dropout 0.2, rescored on frozen negatives) | 0.8240 | 0.6389 | +0.61% HR@10 vs this repo; +7.40% NDCG@10 |
@@ -155,7 +185,12 @@ Everything below follows the same three rules; deviations are marked at the poin
 
 All RecBole rows are 200 epochs.
 
-### The dropout default
+#### 1.2 The dropout default
+
+**One hyperparameter default decides the SASRec–BERT4Rec comparison, and the winner flips three
+ways depending on which SASRec is used.** RecBole's two configs are identical on every
+architectural default except dropout; the rows below are protocol- and budget-matched, so the only
+thing separating them is that one line.
 
 | Comparison (protocol- and budget-matched) | HR@10 | NDCG@10 | Winner |
 |---|---|---|---|
@@ -176,8 +211,8 @@ the BERT4Rec reproducibility literature describes. Claim-by-claim analysis:
 
 **What this does and does not settle.** The BERT4Rec reproducibility literature's central claim is
 about *training budget* — that BERT4Rec's reported wins need far more training than the original
-comparisons gave it. **This repo does not test that claim, and as of 2026-08-25 it has
-been decided that it will not.** Only the 1× (200-epoch) point ran; 4× and 10× were cut on cost, and
+comparisons gave it. **This repo does not test that claim, and deliberately will not.** Only the
+1× (200-epoch) point ran; 4× and 10× were cut on cost, and
 the limitations section below carries the full costing and reasoning. There is no budget curve here
 and nothing on this page adjudicates the controversy on its own terms. What the table
 above establishes is something upstream of it: at a *fixed* budget, the SASRec–BERT4Rec comparison
@@ -186,7 +221,14 @@ depending on which SASRec you pick. That makes the controversy's premise — tha
 were ever compared like for like — the thing in question, which is a different and, taken on its
 own, arguably more useful finding. Read it that way, not as a verdict.
 
-### Sampled vs full-catalog ranking — ML-1M, test, k=10
+### 2. What the sampled protocol hides
+
+#### 2.1 Sampled versus full-catalog ranking
+
+**Two implementations that agree to +0.61% on the sampled protocol diverge by +40% / +53% under
+full-catalog ranking.**
+
+*ML-1M, test, k=10.*
 
 | Model | HR@10 | NDCG@10 |
 |---|---|---|
@@ -204,7 +246,12 @@ with how much the metric cares about *where* in the ranking the target lands, wh
 training objective — full-catalog cross-entropy (RecBole) vs BCE against one sampled negative (this
 repo, per the paper). The next section tests that directly.
 
-### The training objective, isolated
+![sampled versus full-catalog ranking](results/figures/sampled_vs_full.png)
+
+#### 2.2 Training objective
+
+**The loss function alone reproduces the whole shape of the cross-framework gap, and the sampled
+protocol cannot see it.**
 
 The two frameworks' SASRecs differ in the loss *and* in width (64 vs 50), heads (2 vs 1), inner size
 and update granularity, so the cross-framework gap cannot attribute anything on its own.
@@ -237,17 +284,17 @@ It does not account for all of it. The residual is +14.30% / +16.06% seed-42-to-
 **+15.86% / +17.15%** on three-seed means now that RecBole has seeds of its own. Either way it
 clears the floor for this particular comparison — 3.84%, built from RecBole's measured 1.83%
 full-ranking spread and CE's 0.58% rather than from one blanket number — so it is real, and what
-remains on the table is architecture and batch size. The suspect named in earlier versions of this README was the right one, but it was never the
-only one. The next section tests the remaining config-visible suspects one at a time, three seeds
+remains on the table is architecture and batch size. Width was the right suspect, but it was never
+the only one. The next section tests the remaining config-visible suspects one at a time, three seeds
 each: width is real and worth about a sixth of the residual, batch size is null, and head count is
 too noisy an arm for three seeds to settle.
 
 Two things worth taking from this beyond the attribution. **Sampled HR@10 cannot see this at all** —
 the two objectives tie on it (−0.38%, inside noise) while diverging by 22.54% on full ranking.
 A model selected on sampled HR@10 would call these interchangeable. And **CE converges far faster**:
-it reaches BCE's best-over-200-epochs validation NDCG@10 at **epoch 36**, a 5.6x saving, at 16.9
-s/epoch against 6.9 (the full-catalog softmax is ~2.4x more expensive per epoch, so the saving is
-real but roughly 2.3x rather than 5.6x in wall-clock).
+it reaches BCE's best-over-200-epochs validation NDCG@10 at **epoch 36**, a 5.6× saving, at 16.9
+s/epoch against 6.9 (the full-catalog softmax is ~2.4× more expensive per epoch, so the saving is
+real but roughly 2.3× rather than 5.6× in wall-clock).
 
 Caveat on budget: both arms are still improving at epoch 200 (best validation at epoch 195 for BCE,
 198 for CE), so this is a matched-budget comparison, not a converged one. Given CE's faster
@@ -257,15 +304,18 @@ is the conservative direction.
 Reproduce: `uv run python -m src.train --config configs/ablation/sasrec_ml1m_loss_ce.yaml`
 (~56 min on an M-series GPU).
 
-### The architecture residual: width is real, and small
+#### 2.3 Architecture: width, update granularity, head count
+
+**Width is a real effect and a small one; update granularity is a measured null; head count is
+underpowered and left undecided.**
 
 The objective left +14.30% HR@10 / +16.06% NDCG@10 on the table against RecBole. The named suspects
 were width (64 vs 50), head count (2 vs 1) and update granularity. Each gets one arm, single-variable
 on top of CE, against the same control (`ablation_ml1m_loss_ce`) rather than against the BCE baseline.
 
 On granularity the arm is `batch_size: 19`, not 2048. Matching RecBole means matching *target
-positions per optimizer step*, and by that measure RecBole's step is 6.6x smaller than this repo's,
-not 16x larger (the note above works through the counting). 2048/107.2 = 19.1, so 19 is the number
+positions per optimizer step*, and by that measure RecBole's step is 6.6× smaller than this repo's,
+not 16× larger (the note above works through the counting). 2048/107.2 = 19.1, so 19 is the number
 that lands this repo on RecBole's granularity; copying 2048 across would move away from it and OOM
 besides.
 
@@ -280,10 +330,10 @@ besides.
 The RecBole column is seed 42; at three seeds its full-ranking means are 0.3507 / 0.2037, so the
 share-of-residual figures below are computed against a target that is itself ±1.83% per run.
 
-That was one seed per arm, and on the repo's blanket noise floor (3.37% full-ranking) every one of
-these full-ranking deltas reads as noise. **That verdict was wrong, and the reason is worth more than
-the result.** The 3.37% floor is 2·√2·σ measured on five seeds of the *BCE baseline*, applied to CE
-runs as a proxy. It does not describe them. Every arm and the control now have three seeds:
+One seed per arm is not enough to read these deltas, and neither is a borrowed floor. Judged against
+the repo's blanket 3.37% full-ranking floor, every delta above reads as noise — but that floor is
+2·√2·σ measured on five seeds of the *BCE baseline*, and it does not describe CE runs. Every arm and
+the control therefore have three seeds of their own:
 
 | full ranking, 3 seeds each | CE control | batch19 | width64 | heads2 |
 |---|---|---|---|---|
@@ -376,13 +426,14 @@ comparison is regenerated by, e.g.,
 (substitute `batch19` or `heads2`); the printed table carries the means, per-arm relative standard
 deviations, Welch CIs and p-values quoted above.
 
-A note on wall-clock, not on numerics: the first attempt at the `heads2` seeds ran while the machine
-was busy and hit training epochs of 3,000-4,000s against a 16s median, 15 stalled epochs out of 33.
-Re-running on an idle box gave 194 consecutive epochs at 15.8-22.1s with no stall at all. Same
-config, same seed — only contention. Seed runs are cheap enough to be worth starting on a quiet
-machine rather than debugging the timings afterwards.
+### 3. Semantic IDs versus atomic IDs
 
-### Atomic vs semantic IDs — Amazon Beauty, test, k=10
+#### 3.1 Accuracy, compression, and parameters — Amazon Beauty
+
+**Semantic IDs cost 57.7% of full-catalog HR@10 and buy a 7.3× parameter reduction. The trade is
+real, and it is not a wash.**
+
+*Amazon Beauty, test, k=10.*
 
 Same backbone, same protocol, same frozen negatives. The only variable is whether an item is one
 embedding or a sequence of four semantic tokens. Both full-ranking columns score the catalog
@@ -394,9 +445,9 @@ exhaustively.
 | GenRec (semantic) | 0.3621 | 0.2235 | 0.0251 | 0.0131 | **113,472** |
 | relative | −28.95% | −35.27% | −57.7% | −56.6% | **13.7%** |
 
-Every margin is far outside the seed-noise floor — and as of 2026-08-25 that floor is Beauty's own.
-The SASRec row was re-run at seeds 1 and 2 (200 epochs each, ~22 min on the laptop GPU), because
-until then every Beauty margin on this page was judged against a floor measured on ML-1M:
+Every margin is far outside the seed-noise floor, and that floor is Beauty's own rather than a
+proxy: the SASRec row was re-run at seeds 1 and 2 (200 epochs each, ~22 min on the laptop GPU)
+specifically so that no Beauty margin is judged against a spread measured on ML-1M.
 
 | Beauty SASRec, 3 seeds | mean | rel. std | min | max | borrowed ML-1M proxy |
 |---|---|---|---|---|---|
@@ -406,13 +457,12 @@ until then every Beauty margin on this page was judged against a floor measured 
 | full NDCG@10 | 0.0314 | **3.73%** | 0.0303 | 0.0326 | 1.08% |
 
 Beauty SASRec was the noisiest configuration in the repo when it was seeded, and the borrowed floor
-was too narrow on every one of the four metrics — 2x on the sampled pair, 2.1x and 3.5x on full
+was too narrow on every one of the four metrics — 2× on the sampled pair, 2.1× and 3.5× on full
 ranking. That is the same direction of error the RecBole seeds found (1.83% against a borrowed
-1.19%) and the opposite of the CE family's, which is the third independent demonstration that a
-single noise floor cannot be right for every configuration.
+1.19%) and the opposite of the CE family's — a third independent demonstration that a single noise
+floor cannot be right for every configuration.
 
-The other half of this comparison was still one run at seed 42. On 2026-08-28 it was seeded too,
-which was the last place in the repo where a number was reported without its spread being measured:
+The generative side is seeded too, so neither half of this comparison rests on a single run:
 
 | Beauty GenRec, 3 seeds | mean | rel. std | min | max |
 |---|---|---|---|---|
@@ -424,7 +474,7 @@ which was the last place in the repo where a number was reported without its spr
 **The generative model is by far the noisiest configuration measured here — but only on the protocol
 that carries the argument.** Its sampled spread, 0.98%, is ordinary: comparable to Beauty SASRec's
 0.78% and to every other family on the page. Its exhaustive full-ranking spread is fourteen times
-that, and 3.6x the widest previously measured (Beauty SASRec's 3.73%). The two protocols do not
+that, and 3.6× the widest previously measured (Beauty SASRec's 3.73%). The two protocols do not
 merely differ in width; they disagree about which run is best. `genrec_beauty_seed1` has the highest
 sampled HR@10 of the three and the lowest full HR@10 by 20%, and it trained longest doing it —
 early stopping ran 184 epochs against seed 42's 100 and seed 2's 62, a threefold spread in training
@@ -432,11 +482,11 @@ length that moved the sampled metrics by under 1%. A 101-negative protocol repor
 reproducible to a percent while full ranking on the same three checkpoints reports 13.6%. That is
 the same sentence this repo spends its BERT4Rec chapter on, turned on its own model.
 
-The margins survive, less comfortably than the borrowed floors suggested. Against measured floors of
-2.49% sampled and **28.15%** full — the borrowed pair was 2.20% and 10.55% — the four relatives
-clear by 11.6x, 14.2x, **2.05x and 2.01x**. The full-ranking verdict was previously stated as
-clearing by 5.5x and 5.4x; measuring the generative side halved it. It is still a margin no
-plausible reading closes, and it is no longer an assumed one.
+The margins survive, less comfortably than a borrowed floor would suggest. Against measured floors
+of 2.49% sampled and **28.15%** full — the borrowed pair was 2.20% and 10.55% — the four relatives
+clear by 11.6×, 14.2×, **2.05× and 2.01×**. Measuring the generative side rather than borrowing a
+spread for it roughly halved the full-ranking headroom. It is still a margin no plausible reading
+closes, and it is no longer an assumed one.
 
 
 The parameter column is what makes this a trade rather than a loss. The comparison **cannot** be
@@ -447,7 +497,10 @@ Unconstrained greedy decoding produces a valid item 81.8% of the time after trai
 two epochs), so the Trie constraint is doing real work — without it, nearly one in five top-1
 recommendations would not be an item that exists.
 
-### Cold start: the hypothesis fails in the direction it was supposed to win
+#### 3.2 Cold start by item frequency
+
+**The hypothesis fails in the direction it was supposed to win, and survives only in its narrowest
+form.**
 
 Semantic IDs should help where atomic IDs are weakest — a rare item has a barely-trained embedding,
 but its semantic ID is built from codes thousands of items share. Prediction: GenRec loses on the
@@ -474,19 +527,13 @@ retrieves 7.25% HR@10 where SASRec retrieves 0.00% — 10 hits in 138 against no
 one-sided *p* = 0.0008 (two-sided 0.0016). Undebiased it is 1 hit in 138, *p* = 0.50: the reach
 claim rests on the debiased scoring rule, not on the model as trained. Every p-value here is
 printed by `scripts/compare_atomic_vs_semantic.py` and written into
-[`results/tables/atomic_vs_semantic.md`](results/tables/atomic_vs_semantic.md); until 2026-08-25
-they lived only in this prose. On tail items it does not separate from SASRec
-(65 hits against 85 in 4,594; two-sided *p* = 0.118, and 0.059 one-sided in SASRec's favour).
+[`results/tables/atomic_vs_semantic.md`](results/tables/atomic_vs_semantic.md). On tail items it
+does not separate from SASRec (65 hits against 85 in 4,594; two-sided *p* = 0.118, and 0.059
+one-sided in SASRec's favour).
 
-That 0.059 has a history worth keeping. It stood here until 2026-08-25, when it was replaced by
-0.070 as a correction — the prose had never been checked against a script, and the stored bucket
-counts said 66 hits, not 65. Regenerating the artifact on 2026-08-29 put 65 back: the counts it was
-checked against no longer reproduce. `results/tables/atomic_vs_semantic.json` had last been written
-at 4cddaab, and both the scorer and the machine state have moved since; the difference is two users
-out of 22,363, the same top-10-boundary noise the log records for this evaluator. Which of the two
-moved it is not isolated here, and the honest reading is not that either figure was a transcription
-error — it is that a bucket count sitting one user from a boundary is not a four-decimal fact, and
-neither 0.059 nor 0.070 should have been quoted as one.
+Read that 0.059 as one significant figure, not three: the bucket count behind it sits one user from
+a top-10 boundary, and it has moved between 0.059 and 0.070 across regenerations of the artifact.
+[`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md) records which regenerations moved it and why.
 
 Semantic IDs really do reach items an atomic table structurally cannot. The price is
 more than half the overall accuracy, paid on the head where the traffic is.
@@ -510,7 +557,10 @@ of the reach result is 7 to 10 hits in 138, *p* ≤ 0.0072. The undebiased "1 hi
 (*p* = 0.50), and three seeds make it a rounding artifact rather than a hit. Per-seed counts are in
 [`results/tables/genrec_seed_spread_amazon-beauty.md`](results/tables/genrec_seed_spread_amazon-beauty.md).
 
-### Mechanism: generation collapses onto a small set of code sequences
+#### 3.3 Recommendation diversity and the popularity prior
+
+**Generation collapses onto a small set of code sequences, and removing the popularity prior does
+not undo it.**
 
 | model | distinct items across all top-10s | median train freq | % head | % torso | % tail | % unseen |
 |---|---|---|---|---|---|---|
@@ -518,13 +568,11 @@ of the reach result is 7 to 10 hits in 138, *p* ≤ 0.0072. The undebiased "1 hi
 | GenRec (semantic) | **1,749** (14%) | 63 | 74.1% | 21.3% | 4.6% | 0.0% |
 | GenRec debiased α=1 | **2,084** (17%) | 5 | 8.1% | 50.3% | 39.8% | 1.8% |
 
-The debiased row is corrected as of 2026-08-27. It previously read 1,976 items and 11.6% unseen,
-both inflated by a padding token: `α > 0` computed `−inf − (−inf)` at index 0 and `torch.topk`
-sorts NaN above every real score, so the padding id led every debiased user's top-10 — one slot
-in ten, all of it landing in the unseen bucket. The ranked metrics above were never affected.
-The distinct-item counts are also reproducible only to about ±15 (0.8%): they are set statistics
-over 223,630 slots, and MPS float noise at the top-10 boundary moves them. Neither the size of
-the collapse nor any conclusion below turns on that margin.
+The distinct-item counts are reproducible only to about ±15 (0.8%): they are set statistics over
+223,630 slots, and MPS float noise at the top-10 boundary moves them. Neither the size of the
+collapse nor any conclusion below turns on that margin. (The debiased row also once carried a
+padding-token artifact that inflated its coverage and unseen share; the ranked metrics were never
+affected. See [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md).)
 
 The debiased row pins the mechanism down, and it cuts against the tidy explanation. Debiasing
 changes *what* is recommended enormously — head share 74.1% → 8.1%, torso 21.3% → 50.3%, tail
@@ -540,11 +588,12 @@ decoder repairs.
 Per-level code accuracy (teacher-forced on the true prefix) is 9.8% / 17.9% / 22.4% / 86.3%.
 Accuracy *rises* with depth as the prefix narrows the choice, and the content-free disambiguation
 token is nearly free — so Beauty's 11.78% collision rate is not the bottleneck it appears to be.
-An earlier version of this README concluded from those four numbers that the binding constraint is
-the first code. The next section measures what that constraint is actually worth, and the
-conclusion does not survive.
+It is tempting to read those four numbers as making the first code the binding constraint. The next
+section measures what that constraint is actually worth in retrieval terms, and it is not.
 
-### What the first code is worth, and why fixing it would not be enough
+#### 3.4 Oracle-prefix decomposition
+
+**The first code is expensive but not binding: fixing it would not rescue the model.**
 
 Per-level accuracy is a statement about logits. This is the same question asked in retrieval terms:
 hand the model the target's true first *d* codes for free, restrict scoring to the items sharing
@@ -561,7 +610,7 @@ Not comparable to SASRec's 0.0594 — SASRec gets no oracle. Read it as a decomp
 probability mass goes wrong. Depth 0 reproduces the reported GenRec row exactly (0.0251) and the
 level-1 top-1 rate below reproduces the teacher-forced 9.8%, from an independent code path.
 
-The first code is expensive: handing it over multiplies HR@10 by **12.4x**. But it is not the
+The first code is expensive: handing it over multiplies HR@10 by **12.4×**. But it is not the
 binding constraint, because handing it over does not rescue the model — **with the right region and
 a median of 51 candidates left, 69% of targets still miss the top 10.** Retrieval only becomes
 reliable at depth 2, where the median candidate set is 2.
@@ -589,14 +638,14 @@ targets in three with fifty candidates in front of it.
 Reproduce: `uv run python -m scripts.first_code_ceiling` (~55 min; one exhaustive pass serves every
 depth). Full report: [`results/tables/first_code_ceiling.md`](results/tables/first_code_ceiling.md).
 
-### Beam search is not a faithful ranker
+#### 3.5 Beam search as a ranker
 
-An earlier iteration ranked GenRec by constrained beam search and argued the approximation "can
-only cost the generative side," on the evidence that widening the beam 20 → 200 changed nothing.
-That reasoning was wrong, and the numbers throughout this README have been regenerated with
-exhaustive scoring.
+**Constrained beam search is not a faithful ranker, and every generative number on this page is
+therefore exhaustively scored rather than beam-ranked.**
 
-On the same 1,500 users, beam-20 reports HR@10 0.0407 where exhaustive scoring gives 0.0240, and
+The case for beam-ranking was that widening the beam 20 → 200 changed nothing, so the approximation
+"can only cost the generative side." That reasoning does not hold. On the same 1,500 users,
+beam-20 reports HR@10 0.0407 where exhaustive scoring gives 0.0240, and
 the **mean true rank of a beam-reported top-10 hit is 167**. Beam pruning discards 236 of 256 first
 codes, so the high-scoring items that should have outranked the target never enter the returned
 list. The width sweep missed this because widening the beam finds more targets *and* more
@@ -607,7 +656,7 @@ Superseded beam figures: −44.6% overall (vs −57.7% exhaustive), 839 distinct
 (vs 1,749 / 74.1%). The collapse is real either way, and about half as severe as the beam made it
 look.
 
-### The same comparison on ML-1M — the dense regime
+#### 3.6 The dense regime — ML-1M
 
 Beauty is the regime semantic IDs should suit: 12,101 items, sparse, 11.78% of them sharing a code
 prefix with a catalog neighbour. ML-1M is the opposite — 3,416 items, dense, 1.46% collisions, and
@@ -623,16 +672,14 @@ comparison here is the check on whether Beauty's result belongs to semantic IDs 
 **The accuracy verdict repeats, and it does not depend on sparsity.** −53.0% full HR@10 here
 against −57.7% on Beauty: the generative model loses by roughly the same margin in the dense
 regime it was supposed to struggle in as in the sparse one it was supposed to suit. That margin was
-first stated against ML-1M SASRec's own per-run spread with the generative side borrowed, on the
-reasoning that no plausible spread closes a gap this size. It was seeded on 2026-08-28 and the
-reasoning held:
+stated against measured spreads on both sides rather than against a borrowed one:
 
 | ML-1M GenRec, 3 seeds | mean | rel. std | min | max |
 |---|---|---|---|---|
 | full HR@10, exhaustive | 0.1164 | 3.48% | 0.1124 | 0.1205 |
 | full NDCG@10, exhaustive | 0.0601 | 4.87% | 0.0569 | 0.0627 |
 
-The floor that produces is 10.03% against the borrowed 3.37%, and −53.0% still clears it 5.3x. Note
+The floor that produces is 10.03% against the borrowed 3.37%, and −53.0% still clears it 5.3×. Note
 what does *not* transfer: the generative spread here is a third of Beauty's 13.57%, so even GenRec's
 own noise cannot be carried between the two datasets. Every generative margin on this page is now
 measured on both sides; nothing in the second deliverable is borrowed.
@@ -651,16 +698,19 @@ Both full-ranking columns score all 3,416 items for all 6,040 test users
 `full_*` columns for `genrec_ml1m` in [`results/tables/master.md`](results/tables/master.md) are
 beam-ranked and read 0.1086 / 0.0579 — here beam *costs* 6.7% rather than the 32% it gained on
 Beauty, because at 1.46% collisions almost nothing can be credited by prefix and only the pruning
-is left. Both of these numbers were wrong until 2026-08-27: the exhaustive evaluator was scoring
-NaN as a rank-0 hit and reported 0.2682, an 8.4% *win*. The account is in
-[`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md).
+is left. Both numbers superseded an earlier pair produced by an evaluator that scored NaN as a
+rank-0 hit; the account is in [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md).
 
 The cold-start buckets carry nothing on this dataset. After 5-core filtering ML-1M's test split has
 no unseen items and two tail users, so 5,990 of 6,040 targets are head. The bucketed table is
 generated for symmetry and reports what little there is; the cold-start claim rests on Beauty
 alone.
 
-### Ablations — ML-1M, test, k=10, all rows at 100 epochs
+### 4. Supporting measurements
+
+#### 4.1 Hyperparameter ablations
+
+*ML-1M, test, k=10, all rows at 100 epochs.*
 
 Deltas against the 100-epoch baseline, marked against the BCE baseline's floor (sampled 0.96%,
 full 3.37%). `~` means inside seed noise. Both sides of every delta are that configuration, so the
@@ -676,18 +726,19 @@ ablation arm has a second seed of its own.
 | maxlen = 100 | 0.8058 | −1.16% | 0.2346 | ~ −0.14% | 2.85 |
 | negative sampling = popularity-weighted | 0.7540 | −7.51% | 0.1871 | −20.37% | 6.93 |
 
-Two notes on reading this table. First, it is baselined at a matched budget: an earlier version
-charged every ablation for 100 fewer epochs than its baseline, which is small on sampled HR@10
-(+0.47%) but large on full HR@10 (+5.36%) and reversed two conclusions — pos-emb-none and
-maxlen-100 both looked like real full-ranking regressions and are in fact inside noise. Read
-literally, **maxlen 100 and 200 are indistinguishable on full ranking at this budget**, at less
-than half the per-epoch cost.
+Two notes on reading this table. First, it is baselined at a **matched** budget, which matters more
+than it sounds: charging each ablation against a baseline trained 100 epochs longer shifts sampled
+HR@10 by only +0.47% but full HR@10 by +5.36%, enough to turn pos-emb-none and maxlen-100 into
+apparent full-ranking regressions when both are inside noise. Read literally, **maxlen 100 and 200
+are indistinguishable on full ranking at this budget**, at less than half the per-epoch cost.
 
 Second, positional embeddings are the interesting row: dropping them costs ~1% sampled and nothing
 detectable on full ranking, while *sinusoidal* is the one variant that clearly hurts full ranking
 (−7.12%). Learnable-vs-none is nearly a wash; learnable-vs-sinusoidal is not.
 
-### Noise floor — ML-1M SASRec, 5 seeds (42, 1–4)
+#### 4.2 Seed-noise floors
+
+*ML-1M SASRec, 5 seeds (42, 1–4).*
 
 Only the training seed varies (weight init + training negative sampler); evaluation negatives stay
 frozen, so this is training noise alone.
@@ -703,8 +754,8 @@ frozen, so this is training noise alone.
 sensitive to initialization than separating 101. Comparisons here are between two runs each
 measured once, so the relevant floor is 2·√2·σ: **0.96% sampled, 3.37% full**.
 
-**That floor describes this configuration and no other, and treating it as a constant of the repo
-was wrong in both directions.** Every configuration with three or more seeds now carries its own:
+**That floor describes this configuration and no other.** Treating it as a constant of the repo
+errs in both directions, so every configuration with three or more seeds carries its own:
 
 | configuration | seeds | sampled | full |
 |---|---|---|---|
@@ -721,25 +772,29 @@ was wrong in both directions.** Every configuration with three or more seeds now
 
 Per-run relative standard deviation, worst metric per protocol. Read the full-ranking column: it
 spans **0.58% to 13.57%**, a factor of twenty-three across configurations that differ by one field,
-one framework, one dataset, or one item representation (the two GenRec rows are the only entries
-whose full-ranking spread is not measured through MLflow — see below). Borrowing the BCE baseline's 1.19% overstates the CE family's noise by 2× — which is how
-`width64`'s real effect spent a day misfiled as noise — and *understates* RecBole's by 1.5×, which
-would wave through a full-ranking margin RecBole's own seeds cannot support. Both directions of
-error, from one borrowed number. There is no corrected constant, only per-configuration spreads.
+one framework, one dataset, or one item representation.
 
-So `scripts/seed_variance.py` no longer judges every margin against one floor. Each claimed margin
-names the two configurations it compares and is checked against 2·√(σ_a² + σ_b²) — which collapses
-to the familiar 2·√2·σ only when both sides have the same spread. Rows where one side has no seeds
-of its own are printed as `borrowed`, so it stays visible which verdicts are still proxies.
-The two GenRec families are the one place a spread is not read from MLflow: `train_genrec` logs a
-beam-20 `test_full_*`, while every full-ranking margin on this page is exhaustive, so their
-full-ranking spread comes from `scripts/genrec_seed_spread.py` — the same exhaustive pass that
-produces the tables — and only their sampled pair comes from MLflow. Using the logged spread there
-would be a proxy of exactly the kind this section exists to remove.
+Borrowing the BCE baseline's 1.19% therefore errs both ways. It overstates the CE family's noise by
+2×, which is enough to hide `width64`'s real effect, and *understates* RecBole's by 1.5×, which
+would wave through a full-ranking margin RecBole's own seeds cannot support. There is no corrected
+constant to substitute — only per-configuration spreads.
+
+Two consequences for how margins are judged here:
+
+- **No single floor.** `scripts/seed_variance.py` checks each claimed margin against
+  2·√(σ_a² + σ_b²) for the two configurations it actually compares, which collapses to the familiar
+  2·√2·σ only when both sides have the same spread. Rows where one side has no seeds of its own
+  print as `borrowed`, so it stays visible which verdicts are still proxies.
+- **The GenRec spreads are not read from MLflow.** `train_genrec` logs a beam-20 `test_full_*`,
+  while every full-ranking margin on this page is exhaustive, so the two GenRec rows take their
+  full-ranking spread from `scripts/genrec_seed_spread.py` — the same exhaustive pass that produces
+  the tables — and only their sampled pair from MLflow. Using the logged spread would be a proxy of
+  exactly the kind this section exists to remove.
+
 `uv run python -m scripts.seed_variance` prints all of it. Three to five seeds estimate σ loosely —
 these are sanity floors, not significance tests, and the seeded arms carry Welch tests as well.
 
-### Semantic ID quality
+#### 4.3 Semantic ID quality
 
 Item text → `all-MiniLM-L6-v2` (384-d) → residual K-Means, 3 levels × 256 codes, plus a 4th token
 disambiguating items that land on an identical 3-token code. ML-1M text is title + genres; Beauty is
@@ -766,9 +821,6 @@ Nobody chose that; it came in with the text format.
 Reports: [`results/tables/semantic_ids_ml-1m.md`](results/tables/semantic_ids_ml-1m.md) ·
 [`results/tables/semantic_ids_beauty.md`](results/tables/semantic_ids_beauty.md).
 
-Script-generated master table (never hand-edited):
-[`results/tables/master.md`](results/tables/master.md).
-
 ---
 
 ## Serving demo
@@ -791,59 +843,64 @@ the beam-search section.
 
 ## Reproduce
 
+All commands assume `uv sync` has been run. Timings are for an Apple M-series GPU (MPS).
+
+### Setup and data
+
 ```bash
 uv sync
-
-# Data
 uv run python -m src.data.download --dest data/raw --dataset all
 uv run python -m src.data.preprocess --dataset ml-1m  --out-dir data/processed/ml-1m
 uv run python -m src.data.preprocess --dataset beauty --out-dir data/processed/beauty
+```
 
-# Baselines + SASRec
+### Baselines and SASRec
+
+```bash
 uv run python -m src.baselines --data-dir data/processed/ml-1m
 uv run python -m src.train --config configs/sasrec_ml1m.yaml
 uv run python -m src.train --config configs/sasrec_beauty.yaml
+```
 
-# Loss-only ablation: full-catalog softmax instead of BCE-with-one-negative (~56 min)
+### Ablations
+
+```bash
+# Loss only: full-catalog softmax instead of BCE-with-one-negative (~56 min)
 uv run python -m src.train --config configs/ablation/sasrec_ml1m_loss_ce.yaml
 
 # Architecture arms on top of CE, one field each (~30-55 min apiece)
 uv run python -m src.train --config configs/ablation/sasrec_ml1m_ce_batch19.yaml
 uv run python -m src.train --config configs/ablation/sasrec_ml1m_ce_width64.yaml
 uv run python -m src.train --config configs/ablation/sasrec_ml1m_ce_heads2.yaml
+```
 
-# Semantic IDs (Beauty metadata is an extra ~99MB)
+### Semantic IDs and the generative model
+
+```bash
+# Beauty metadata is an extra ~99MB
 uv run python -m src.data.download --dest data/raw --dataset beauty --with-meta
 uv run python -m src.semantic_ids.embed     --dataset ml-1m
 uv run python -m src.semantic_ids.rq_kmeans --dataset ml-1m
 uv run python -m scripts.inspect_semantic_ids --dataset ml-1m   # quality report
 
-# Generative model
 uv run python -m src.train_genrec --config configs/genrec_beauty.yaml
-uv run python -m src.train_genrec --config configs/genrec_ml1m.yaml    # ~3h20m on an M-series GPU
+uv run python -m src.train_genrec --config configs/genrec_ml1m.yaml    # ~3h20m
+```
 
-# Analysis. Each of these scores all 12,101 items for all 22,363 test users:
-# budget ~55 min apiece on an M-series GPU. Add --beam to the first for the
-# superseded beam-ranked numbers.
+### Analysis
+
+Each script below scores all 12,101 items for all 22,363 Beauty test users — budget ~55 min apiece.
+Add `--beam` to the first for the superseded beam-ranked numbers.
+
+```bash
 uv run python -m scripts.compare_atomic_vs_semantic  # bucket table + cold-start figure
 uv run python -m scripts.diagnose_genrec             # diversity + per-level accuracy
 uv run python -m scripts.debias_decoding             # popularity-debiasing α sweep
 uv run python -m scripts.first_code_ceiling          # oracle-prefix ladder + level-1 localization
 uv run python -m scripts.seed_variance               # noise floor + margin re-check
 uv run python -m scripts.seed_variance --prefix sasrec_beauty   # the same, for Beauty
-# Beauty's own seeds (~22 min each, run one at a time so they do not contend):
-# for s in 1 2; do uv run python -m src.train --config configs/sasrec_beauty.yaml \
-#     --seed $s --run-name sasrec_beauty_seed$s; done
 
-# GenRec's own seeds, and the exhaustive spread they feed (~1h per Beauty run,
-# ~3h20m per ML-1M run; then ~55 min of scoring per Beauty seed, ~8 min per ML-1M seed):
-# for s in 1 2; do uv run python -m src.train_genrec --config configs/genrec_beauty.yaml \
-#     --seed $s --run-name genrec_beauty_seed$s; done
-uv run python -m scripts.genrec_seed_spread   # Beauty; --limit N to sanity-check on a subset
-uv run python -m scripts.genrec_seed_spread --genrec-config configs/genrec_ml1m.yaml \
-    --run-names genrec_ml1m genrec_ml1m_seed1 genrec_ml1m_seed2
-
-# The same comparison on ML-1M (~8 min: 3,416 items x 6,040 test users)
+# The same comparison on ML-1M (~8 min: 3,416 items × 6,040 test users)
 uv run python -m scripts.compare_atomic_vs_semantic \
     --sasrec-config configs/sasrec_ml1m.yaml --genrec-config configs/genrec_ml1m.yaml
 
@@ -851,9 +908,35 @@ uv run python -m src.export_results   # rebuild results/tables/master.md + figur
 uv run pytest tests/
 ```
 
-Experiment tracking is MLflow (`sqlite:///mlflow.db`, experiment `sequential-rec`); the master
-table is generated from it rather than transcribed. Every table on this page is asserted against the
-thing that produced it by `tests/test_readme_matches_results.py` — measured cells against
+### Optional: seed replication
+
+The per-configuration noise floors in [§4.2](#42-seed-noise-floors) come from these runs. They are
+the expensive part of the page and are not needed to reproduce any single result.
+
+```bash
+# Beauty SASRec, ~22 min each. Run one at a time so they do not contend for the GPU.
+for s in 1 2; do uv run python -m src.train --config configs/sasrec_beauty.yaml \
+    --seed $s --run-name sasrec_beauty_seed$s; done
+
+# GenRec, ~1h per Beauty run and ~3h20m per ML-1M run.
+for s in 1 2; do uv run python -m src.train_genrec --config configs/genrec_beauty.yaml \
+    --seed $s --run-name genrec_beauty_seed$s; done
+
+# The exhaustive spread those seeds feed: ~55 min per Beauty seed, ~8 min per ML-1M seed.
+uv run python -m scripts.genrec_seed_spread   # Beauty; --limit N to sanity-check on a subset
+uv run python -m scripts.genrec_seed_spread --genrec-config configs/genrec_ml1m.yaml \
+    --run-names genrec_ml1m genrec_ml1m_seed1 genrec_ml1m_seed2
+```
+
+The run name must be overridden alongside the seed, or each seed overwrites the previous checkpoint.
+Start seed runs on an idle machine: under contention this repo has measured training epochs of
+3,000-4,000s against a 16s median, on an identical config and seed.
+
+### How the numbers stay honest
+
+`results/tables/master.md` is generated from MLflow rather than transcribed, and every table on
+this page is asserted against the thing that produced it by
+`tests/test_readme_matches_results.py` — measured cells against
 `results/tables/` and `mlflow.db`, derived cells recomputed from those at full precision — so a
 figure that drifts from its source fails CI instead of waiting to be noticed by a reader. Long GPU
 sweeps run detached on remote sandboxes via `scripts/daytona_*.py`, with result recovery for
@@ -875,7 +958,7 @@ implied.
   the model or the data pipeline rather than a setting.
 - **heads2 is undecided, not null, and will stay that way.** Its full-ranking deltas are positive
   (+1.11% HR@10, +0.99% NDCG@10) but not significant (p=0.29, 0.30), because the arm's own seed spread
-  is the widest measured here -- 1.32% on full HR@10 against the control's 0.19%. From the measured
+  is the widest measured here — 1.32% on full HR@10 against the control's 0.19%. From the measured
   pooled sd, 80% power at that effect size needs ~12 seeds per arm (15 for NDCG@10), ~20 GPU-hours to
   resolve an effect smaller than width's. Not spent, so the arm is recorded as unresolved.
 - **The seeded comparison is three seeds, and the arms are not budget-matched.** Welch df are 2-4 and
@@ -887,9 +970,9 @@ implied.
   full-ranking numbers (1.83% per run against the borrowed 1.19%). Ten configurations now carry
   their own measured spread and every margin is judged against the two it actually compares. What is
   still unmeasured: RecBole's dropout-0.5 and BERT4Rec runs, and the ablation arms at their own
-  100-epoch budget. Beauty's SASRec, and as of 2026-08-28 GenRec on both datasets, have three seeds
-  each. Those remaining rows print as `borrowed` in `seed_variance` rather than being quietly
-  proxied, but borrowed is what they remain.
+  100-epoch budget. Beauty's SASRec and GenRec on both datasets have three seeds each. Those
+  remaining rows print as `borrowed` in `seed_variance` rather than being quietly proxied, but
+  borrowed is what they remain.
 - **The loss ablation is matched-budget, not converged.** Both arms are still improving at epoch
   200. CE's advantage is measured where BCE has not finished training, which understates BCE — the
   conservative direction for the claim being made, but not a converged comparison.
@@ -901,8 +984,8 @@ implied.
   1×/4×/10× trajectory at ~105; running it to this repo's own seeding standard — three seeds of a
   configuration whose spread has never been measured — is ~315 GPU-hours, and at RecBole's defaults
   it would measure training budget crossed with the dropout default shown above to be the dominant
-  term. It was cut on 2026-08-25 because it would reproduce an existing study on someone else's
-  question and would not change a claim on this page. The scaling claim at the heart of the BERT4Rec
+  term. It was cut because it would reproduce an existing study on someone else's question and
+  would not change a claim on this page. The scaling claim at the heart of the BERT4Rec
   controversy is therefore untested here, and stays untested. The one piece of free evidence points
   the interesting way: the dropout-0.2 SASRec was still improving at epoch 189 while the
   default-dropout run had plateaued — the configuration that had not finished training is the one
@@ -915,8 +998,9 @@ implied.
 - **RecBole's dropout-0.2 run now has three seeds; every other RecBole number is still one.** The
   dropout-0.2 SASRec was re-run at seeds 1 and 2, which is what put a measured floor under the
   headline margin it carries (+3.71% / +6.33% on uni100, against that configuration's own floors —
-  0.67% on HR@10 and 0.38% on NDCG@10 — 5.5× and 17× clear). The dropout-0.5 SASRec and both BERT4Rec runs remain single-seed, so
-  any margin involving them is still judged against a partly borrowed floor. RecBole's full-ranking
+  0.67% on HR@10 and 0.38% on NDCG@10 — 5.5× and 17× clear). The dropout-0.5 SASRec and both
+  BERT4Rec runs remain single-seed, so any margin involving them is still judged against a partly
+  borrowed floor. RecBole's full-ranking
   spread was the widest measured here until Beauty's SASRec was seeded (3.73%), and that in turn
   until Beauty's GenRec was (13.57%).
 - **Ablations are a statement about 100-epoch training.** Deliberate compute saving; both sides of
@@ -952,12 +1036,41 @@ implied.
 - Rajput et al., *Recommender Systems with Generative Retrieval* (NeurIPS 2023) — TIGER
 - Krichene & Rendle, *On Sampled Metrics for Item Recommendation* (KDD 2020)
 
-Supporting documents:
-[`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md) — claim-by-claim analysis of what
-this repo's data does and does not establish ·
-[`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md) — the full debugging and decision trail, including
-every result that was later corrected ·
-[`docs/original-plan.md`](docs/original-plan.md) and
-[`docs/execution-plan.md`](docs/execution-plan.md) — the pre-registered plan and acceptance
-criteria, written before any experiment ran and kept unedited (several predictions did not
-survive the data).
+### Supporting documents
+
+| Document | What it carries |
+|---|---|
+| [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md) | The dated debugging and decision trail, including every result later corrected and why |
+| [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md) | Claim-by-claim analysis of what this repo's data does and does not establish |
+| [`docs/original-plan.md`](docs/original-plan.md), [`docs/execution-plan.md`](docs/execution-plan.md) | The pre-registered plan and acceptance criteria, written before any experiment ran and kept unedited — several predictions did not survive the data |
+| [`results/tables/master.md`](results/tables/master.md) | Script-generated master table, never hand-edited |
+
+---
+
+## License and dataset terms
+
+**The code in this repository is MIT-licensed** ([`LICENSE`](LICENSE)). That covers everything under
+`src/`, `scripts/`, `serving/`, `tests/`, and `configs/`, plus the generated reports in
+`results/tables/`.
+
+**It does not cover the datasets, which are not redistributed here.** `data/raw/` and
+`data/processed/` are gitignored; `src.data.download` fetches each dataset from its original host at
+setup time, and each arrives under its own terms.
+
+| Dataset | Source | Terms that bind a user of this repo |
+|---|---|---|
+| MovieLens-1M | [GroupLens](https://files.grouplens.org/datasets/movielens/ml-1m.zip), University of Minnesota | Research use permitted. **No redistribution without separate permission**, and **no commercial or revenue-bearing use** without permission from a GroupLens faculty member. No implied endorsement by UMN or GroupLens. Publications must cite the dataset paper. |
+| Amazon Reviews (Beauty) | [SNAP / UCSD](https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/), Julian McAuley | Provided for research use; the dataset page asks that publications cite the two papers below. |
+
+Dataset citations:
+
+- Harper & Konstan, *The MovieLens Datasets: History and Context*, ACM TiiS 5(4), 2015.
+  [doi:10.1145/2827872](https://doi.org/10.1145/2827872)
+- McAuley, Targett, Shi & van den Hengel, *Image-based Recommendations on Styles and Substitutes*,
+  SIGIR 2015.
+- He & McAuley, *Ups and Downs: Modeling the Visual Evolution of Fashion Trends with One-Class
+  Collaborative Filtering*, WWW 2016.
+
+The MovieLens non-commercial condition is the one most likely to matter in practice: the MIT licence
+on this code does **not** grant any right to use ML-1M commercially, and running these scripts
+against it does not create one.

@@ -164,7 +164,7 @@ def test_readme_dropout_table_is_arithmetic_on_the_runs(runs):
 
 # == Results: sampled vs full-catalog ranking ===========================
 
-FULL_RANKING_HEADING = "### Sampled vs full-catalog ranking — ML-1M, test, k=10"
+FULL_RANKING_HEADING = "#### 2.1 Sampled versus full-catalog ranking"
 FULL_RANKING_HEADER = "| Model | HR@10 | NDCG@10 |"
 FULL_RANKING_RUNS = {
     "Popularity": "popularity_ml1m",
@@ -312,13 +312,13 @@ ATOMIC_HEADER = "| | sampled HR@10 | sampled NDCG@10 | full HR@10 | full NDCG@10
 # checked as arithmetic on the two printed counts).
 ATOMIC_TABLES = {
     "beauty": (
-        "### Atomic vs semantic IDs — Amazon Beauty, test, k=10",
+        "#### 3.1 Accuracy, compression, and parameters — Amazon Beauty",
         "sasrec_beauty",
         "genrec_beauty",
         "atomic_vs_semantic.json",
     ),
     "ml-1m": (
-        "### The same comparison on ML-1M — the dense regime",
+        "#### 3.6 The dense regime — ML-1M",
         "sasrec_ml1m",
         "genrec_ml1m",
         "atomic_vs_semantic_ml-1m.json",
