@@ -8,6 +8,7 @@ measured seed-noise floor.**
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c)
 ![Datasets](https://img.shields.io/badge/datasets-ML--1M%20%7C%20Amazon%20Beauty-lightgrey)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
 
@@ -110,6 +111,7 @@ The title names the direction of travel; the experiments are on the item represe
 - [Reproduce](#reproduce)
 - [Limitations and open questions](#limitations-and-open-questions)
 - [References](#references) · [Supporting documents](#supporting-documents)
+- [License and dataset terms](#license-and-dataset-terms)
 
 This page reports current state. The dated trail of how it got there — including every result later
 corrected — is [`REPRODUCTION_LOG.md`](REPRODUCTION_LOG.md).
@@ -141,6 +143,10 @@ throughout are for an Apple M-series GPU (MPS) unless stated otherwise.
 |---|---|---|---|
 | MovieLens-1M | 6,040 | 3,416 | 5-core filtering, leave-one-out split |
 | Amazon Beauty | 22,363 | 12,101 | 5-core filtering, leave-one-out split |
+
+Neither dataset is redistributed here; `src.data.download` fetches both from their original hosts,
+and `data/` is gitignored. Both carry their own terms — see
+[License and dataset terms](#license-and-dataset-terms).
 
 Every result below follows the same three rules; deviations are marked at the point of use.
 
@@ -1038,3 +1044,33 @@ implied.
 | [`docs/bert4rec-controversy.md`](docs/bert4rec-controversy.md) | Claim-by-claim analysis of what this repo's data does and does not establish |
 | [`docs/original-plan.md`](docs/original-plan.md), [`docs/execution-plan.md`](docs/execution-plan.md) | The pre-registered plan and acceptance criteria, written before any experiment ran and kept unedited — several predictions did not survive the data |
 | [`results/tables/master.md`](results/tables/master.md) | Script-generated master table, never hand-edited |
+
+---
+
+## License and dataset terms
+
+**The code in this repository is MIT-licensed** ([`LICENSE`](LICENSE)). That covers everything under
+`src/`, `scripts/`, `serving/`, `tests/`, and `configs/`, plus the generated reports in
+`results/tables/`.
+
+**It does not cover the datasets, which are not redistributed here.** `data/raw/` and
+`data/processed/` are gitignored; `src.data.download` fetches each dataset from its original host at
+setup time, and each arrives under its own terms.
+
+| Dataset | Source | Terms that bind a user of this repo |
+|---|---|---|
+| MovieLens-1M | [GroupLens](https://files.grouplens.org/datasets/movielens/ml-1m.zip), University of Minnesota | Research use permitted. **No redistribution without separate permission**, and **no commercial or revenue-bearing use** without permission from a GroupLens faculty member. No implied endorsement by UMN or GroupLens. Publications must cite the dataset paper. |
+| Amazon Reviews (Beauty) | [SNAP / UCSD](https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/), Julian McAuley | Provided for research use; the dataset page asks that publications cite the two papers below. |
+
+Dataset citations:
+
+- Harper & Konstan, *The MovieLens Datasets: History and Context*, ACM TiiS 5(4), 2015.
+  [doi:10.1145/2827872](https://doi.org/10.1145/2827872)
+- McAuley, Targett, Shi & van den Hengel, *Image-based Recommendations on Styles and Substitutes*,
+  SIGIR 2015.
+- He & McAuley, *Ups and Downs: Modeling the Visual Evolution of Fashion Trends with One-Class
+  Collaborative Filtering*, WWW 2016.
+
+The MovieLens non-commercial condition is the one most likely to matter in practice: the MIT licence
+on this code does **not** grant any right to use ML-1M commercially, and running these scripts
+against it does not create one.
